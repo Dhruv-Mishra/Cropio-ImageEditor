@@ -417,20 +417,62 @@ export default function Home() {
         });
         previewBlobRef.current = downscaled.blob;
 
+        // Send the downscaled preview (max 1200px) for faster upload & inference.
+        // The backend returns coordinates in the dimensions it receives, which
+        // already match the preview space — no extra scaling needed.
         const formData = new FormData();
         formData.append('image', downscaled.blob, file.name || 'image.jpg');
 
-        const response = await fetch('/api/crop-suggest', {
-          method: 'POST',
-          body: formData,
-        });
+        let response: Response;
+        try {
+          response = await fetch('/api/crop-suggest', {
+            method: 'POST',
+            body: formData,
+          });
+        } catch {
+          throw new Error(
+            'The crop detection service is temporarily unavailable. Please try again in a moment.',
+          );
+        }
 
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Failed to get crop suggestion');
+          let detail: string | undefined;
+          try {
+            const data = await response.json();
+            detail =
+              typeof data.detail === 'string'
+                ? data.detail
+                : typeof data.error === 'string'
+                  ? data.error
+                  : undefined;
+          } catch {
+            /* response wasn't JSON */
+          }
+
+          if (response.status === 422 && detail?.toLowerCase().includes('no person')) {
+            throw new Error(
+              "We couldn't detect a person in this image. Please try a photo with a clearly visible person.",
+            );
+          }
+          if (response.status === 400) {
+            throw new Error(
+              "The file you uploaded doesn't appear to be a valid image.",
+            );
+          }
+          if (response.status === 500) {
+            throw new Error(
+              'Something went wrong while analyzing your image. Please try again.',
+            );
+          }
+          throw new Error(
+            detail || 'Failed to get crop suggestion. Please try again.',
+          );
         }
 
         const multiResponse: MultiCropSuggestion = await response.json();
+
+        // Backend received the downscaled preview, so its coordinates are
+        // already in preview-pixel space — use them directly.
         setMultiSuggestion(multiResponse);
 
         // Find the default crop variant

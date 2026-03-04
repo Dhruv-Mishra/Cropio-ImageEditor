@@ -103,6 +103,22 @@ export function scaleToFullRes(
 }
 
 /**
+ * Scales a crop region from full-resolution (natural) coordinates to preview coordinates.
+ * Inverse of scaleToFullRes — divides by scaleFactor.
+ */
+export function scaleToPreview(
+  crop: CropRegion,
+  scaleFactor: number,
+): CropRegion {
+  return {
+    x: Math.round(crop.x / scaleFactor),
+    y: Math.round(crop.y / scaleFactor),
+    width: Math.round(crop.width / scaleFactor),
+    height: Math.round(crop.height / scaleFactor),
+  };
+}
+
+/**
  * Crops an image using the Canvas API and returns a Blob.
  *
  * @param imageSrc  - URL (object URL or data URL) of the source image
