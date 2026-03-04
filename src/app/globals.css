@@ -66,6 +66,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* CSS Keyframe Animations for components */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.85) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 /* Marquee Animation */
 @keyframes marquee {
   0% {
@@ -73,7 +84,7 @@ html {
   }
 
   100% {
-    transform: translateX(-25%);
+    transform: translateX(-33.333%);
   }
 }
 
@@ -99,7 +110,6 @@ html {
   width: 14px !important;
   height: 14px !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
-  backdrop-filter: blur(4px);
   transition: transform 0.1s ease;
 }
 

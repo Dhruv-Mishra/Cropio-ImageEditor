@@ -124,7 +124,7 @@ export function CropEditor({
 
   return (
     <motion.div
-      className="relative flex items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-white/30 p-2 shadow-2xl backdrop-blur-xl dark:border-gray-700/50 dark:bg-gray-900/40 sm:p-4"
+      className="relative flex items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-white/80 p-2 shadow-2xl dark:border-gray-700/50 dark:bg-gray-900/80 sm:p-4"
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}

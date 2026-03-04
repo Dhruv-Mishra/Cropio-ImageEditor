@@ -1,6 +1,3 @@
-'use client';
-
-import { motion } from 'framer-motion';
 import Link from 'next/link';
 
 const footerLinks = {
@@ -27,8 +24,8 @@ const techStack = [
 
 export function Footer() {
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8 mb-24 sm:mb-8 pointer-events-none">
-      <footer className="pointer-events-auto rounded-3xl border border-white/20 bg-white/40 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-xl dark:border-gray-700/50 dark:bg-gray-900/40 px-6 py-10 sm:px-10">
+    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8 mb-8 pointer-events-none hidden sm:block">
+      <footer className="pointer-events-auto rounded-3xl border border-white/20 bg-white/90 shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:border-gray-700/50 dark:bg-gray-900/90 px-6 py-10 sm:px-10">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           {/* Brand column */}
           <div className="sm:col-span-2 lg:col-span-1">
@@ -109,13 +106,12 @@ export function Footer() {
             </h3>
             <div className="flex flex-wrap gap-1.5">
               {techStack.map((tech) => (
-                <motion.span
+                <span
                   key={tech}
-                  whileHover={{ scale: 1.05 }}
-                  className="rounded-full bg-gray-200/80 px-2.5 py-1 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                  className="rounded-full bg-gray-200/80 px-2.5 py-1 text-xs font-medium text-gray-700 transition-transform duration-150 hover:scale-105 dark:bg-gray-800 dark:text-gray-300"
                 >
                   {tech}
-                </motion.span>
+                </span>
               ))}
             </div>
           </div>

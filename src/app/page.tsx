@@ -3,13 +3,28 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import { UploadZone } from '@/components/UploadZone';
-import { CropEditor } from '@/components/CropEditor';
 import { AspectRatioSelector } from '@/components/AspectRatioSelector';
-import { CropTypeSelector } from '@/components/CropTypeSelector';
-import { PhotoMarquee } from '@/components/PhotoMarquee';
-import { CropHistory } from '@/components/CropHistory';
-import Typewriter from 'typewriter-effect';
+import { useTypewriter } from '@/lib/useTypewriter';
+
+// Lazy-load heavy components that are only needed in specific app states
+const CropEditor = dynamic(
+  () => import('@/components/CropEditor').then((m) => ({ default: m.CropEditor })),
+  { ssr: false, loading: () => <div className="animate-pulse h-96 rounded-2xl bg-gray-200 dark:bg-gray-800" /> },
+);
+const CropTypeSelector = dynamic(
+  () => import('@/components/CropTypeSelector').then((m) => ({ default: m.CropTypeSelector })),
+  { ssr: false },
+);
+const CropHistory = dynamic(
+  () => import('@/components/CropHistory').then((m) => ({ default: m.CropHistory })),
+  { ssr: false },
+);
+const PhotoMarquee = dynamic(
+  () => import('@/components/PhotoMarquee').then((m) => ({ default: m.PhotoMarquee })),
+  { ssr: false },
+);
 import type {
   CropRegion,
   AspectRatioOption,
@@ -46,11 +61,13 @@ function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  // Fallback for non-secure contexts (e.g. mobile over HTTP)
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
+  // Fallback using crypto.getRandomValues (works in non-secure contexts)
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 type AppState = 'idle' | 'uploading' | 'editing' | 'exporting';
@@ -60,6 +77,23 @@ const fadeVariants = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -8 },
 };
+
+const TYPEWRITER_STRINGS = [
+  'powered by AI',
+  'cropped magically',
+  'for your resume',
+  'in mere seconds',
+  'ready for LinkedIn',
+];
+
+function TypewriterText() {
+  const text = useTypewriter(TYPEWRITER_STRINGS, {
+    typeSpeed: 50,
+    deleteSpeed: 30,
+    pauseDuration: 2000,
+  });
+  return <>{text}<span className="animate-pulse">|</span></>;
+}
 
 export default function Home() {
   const { vibrate } = useAppHaptics();
@@ -301,7 +335,8 @@ export default function Home() {
         // Handle loading entry from URL if returning from Archive page
         const params = new URLSearchParams(window.location.search);
         const loadId = params.get('load');
-        if (loadId) {
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (loadId && uuidPattern.test(loadId)) {
           const entryToLoad = data.find(e => e.id === loadId);
           if (entryToLoad) {
             handleLoadFromHistory(entryToLoad);
@@ -736,7 +771,7 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
           {/* ---- Idle: hero + upload ---- */}
           {appState === 'idle' && (
             <motion.div
@@ -745,34 +780,20 @@ export default function Home() {
               initial="initial"
               animate="animate"
               exit="exit"
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.15 }}
               className="flex min-h-[50vh] w-full flex-col items-center justify-center py-6 sm:py-10"
             >
               {/* Hero heading */}
               <div className="mb-10 text-center">
                 <motion.h1
-                  initial={{ opacity: 0, filter: 'blur(8px)', y: 20 }}
-                  animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, ease: 'easeOut' }}
-                  className="text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white sm:text-6xl sm:leading-tight min-h-[180px] sm:min-h-[180px] flex flex-col items-center justify-center pt-8 overflow-hidden"
+                  className="text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white sm:text-6xl sm:leading-tight flex flex-col items-center justify-center pt-8 overflow-hidden"
                 >
                   <span className="pb-1">Perfect headshots,</span>
                   <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-blue-400 dark:to-indigo-400 mt-2 block min-h-[1.4em] w-full max-w-[90vw] break-words leading-relaxed pb-3 text-center">
-                    <Typewriter
-                      options={{
-                        strings: [
-                          'powered by AI',
-                          'cropped magically',
-                          'for your resume',
-                          'in mere seconds',
-                          'ready for LinkedIn'
-                        ],
-                        autoStart: true,
-                        loop: true,
-                        delay: 50,
-                        deleteSpeed: 30,
-                      }}
-                    />
+                    <TypewriterText />
                   </span>
                 </motion.h1>
                 <motion.p
@@ -798,7 +819,7 @@ export default function Home() {
               initial="initial"
               animate="animate"
               exit="exit"
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.15 }}
               className="flex min-h-[50vh] w-full flex-col items-center justify-center space-y-6 py-6 sm:py-10"
             >
               <div className="flex w-full min-h-[280px] max-w-2xl items-center justify-center overflow-hidden rounded-3xl bg-gray-100/50 shadow-sm backdrop-blur-sm dark:bg-gray-900/50 border-2 border-dashed border-gray-200 dark:border-gray-800">
@@ -848,7 +869,7 @@ export default function Home() {
                 initial="initial"
                 animate="animate"
                 exit="exit"
-                transition={{ duration: 0.25 }}
+                transition={{ duration: 0.15 }}
                 className="space-y-6"
               >
                 {previewUrl && previewDimensions && currentCrop && multiSuggestion && (
@@ -882,38 +903,31 @@ export default function Home() {
                   />
 
                   <div className="flex items-center justify-center gap-2 w-full sm:w-auto">
-                    <motion.button
+                    <button
                       onClick={handleResetToAi}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="rounded-full border border-blue-300/50 bg-blue-50/50 px-5 py-2.5 text-sm font-medium text-blue-600 shadow-sm backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-md dark:border-blue-700/50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-800/50"
+                      className="rounded-full border border-blue-300/50 bg-blue-50/50 px-5 py-2.5 text-sm font-medium text-blue-600 shadow-sm backdrop-blur-sm transition-all duration-150 hover:scale-105 hover:bg-blue-100/50 hover:shadow-md active:scale-95 dark:border-blue-700/50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-800/50"
                     >
                       Reset
-                    </motion.button>
-                    <motion.button
+                    </button>
+                    <button
                       onClick={handleExport}
                       disabled={appState === 'exporting'}
-                      initial={{ scale: 1 }}
-                      whileHover={{ scale: 1.05, boxShadow: "0px 10px 20px rgba(79, 70, 229, 0.4)" }}
-                      whileTap={{ scale: 0.95 }}
-                      className="rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/30 transition-all hover:from-blue-500 hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:from-blue-500 dark:to-indigo-500"
+                      className="rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/30 transition-all duration-150 hover:scale-105 hover:shadow-[0px_10px_20px_rgba(79,70,229,0.4)] hover:from-blue-500 hover:to-indigo-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:from-blue-500 dark:to-indigo-500"
                     >
                       {appState === 'exporting'
-                        ? 'Exporting\u2026'
+                        ? (<><svg className="inline h-4 w-4 animate-spin mr-1.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Exporting\u2026</>)
                         : 'Export'}
-                    </motion.button>
-                    <motion.button
+                    </button>
+                    <button
                       onClick={handleStartOver}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="rounded-full border border-red-300/50 bg-red-50 p-2.5 text-red-600 shadow-sm backdrop-blur-sm transition-all hover:bg-red-100/80 hover:shadow-md dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/60"
+                      className="rounded-full border border-red-300/50 bg-red-50 p-3 text-red-600 shadow-sm backdrop-blur-sm transition-all duration-150 hover:scale-105 hover:bg-red-100/80 hover:shadow-md active:scale-95 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/60"
                       aria-label="Clear image"
                       title="Clear image"
                     >
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
-                    </motion.button>
+                    </button>
                   </div>
                 </div>
 
@@ -921,19 +935,17 @@ export default function Home() {
                 <AnimatePresence>
                   {lastExportBlob && (
                     <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="flex flex-wrap items-center gap-2 overflow-hidden rounded-lg border border-green-200 bg-green-50/50 p-3 dark:border-green-900/40 dark:bg-green-950/20"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border border-green-200 bg-green-50/50 p-3 dark:border-green-900/40 dark:bg-green-950/20"
                     >
                       <span className="mr-1 text-sm font-medium text-green-700 dark:text-green-400">
                         Exported!
                       </span>
-                      <motion.button
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.97 }}
+                      <button
                         onClick={handleCopyToClipboard}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-colors hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-all duration-150 hover:scale-[1.03] hover:bg-gray-50 active:scale-[0.97] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
                       >
                         <svg
                           className="h-3.5 w-3.5"
@@ -950,13 +962,11 @@ export default function Home() {
                           />
                         </svg>
                         Copy
-                      </motion.button>
+                      </button>
                       {canShare && (
-                        <motion.button
-                          whileHover={{ scale: 1.03 }}
-                          whileTap={{ scale: 0.97 }}
+                        <button
                           onClick={handleShare}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-colors hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
+                          className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-all duration-150 hover:scale-[1.03] hover:bg-gray-50 active:scale-[0.97] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
                         >
                           <svg
                             className="h-3.5 w-3.5"
@@ -973,16 +983,14 @@ export default function Home() {
                             />
                           </svg>
                           Share
-                        </motion.button>
+                        </button>
                       )}
-                      <motion.button
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.97 }}
+                      <button
                         onClick={() => {
                           if (lastExportBlob)
                             downloadBlob(lastExportBlob, 'cropped-portrait.jpg');
                         }}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-colors hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition-all duration-150 hover:scale-[1.03] hover:bg-gray-50 active:scale-[0.97] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 dark:hover:bg-gray-700"
                       >
                         <svg
                           className="h-3.5 w-3.5"
@@ -999,7 +1007,7 @@ export default function Home() {
                           />
                         </svg>
                         Download Again
-                      </motion.button>
+                      </button>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -1009,7 +1017,7 @@ export default function Home() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2, duration: 0.5 }}
-                  className="mx-auto max-w-4xl rounded-xl bg-white/60 p-4 text-sm text-gray-500 shadow-sm backdrop-blur-md dark:bg-gray-900/60 dark:text-gray-400"
+                  className="mx-auto max-w-4xl rounded-xl bg-white/90 p-4 text-sm text-gray-500 shadow-sm dark:bg-gray-900/90 dark:text-gray-400"
                 >
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                     <span>

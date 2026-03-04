@@ -60,7 +60,7 @@ export function MobileNav() {
 
     return (
         <div className="sm:hidden fixed bottom-4 left-4 right-4 z-50 pb-safe">
-            <div className="flex items-center justify-around h-16 px-2 rounded-full border border-white/20 bg-white/70 shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur-xl dark:border-gray-700/50 dark:bg-gray-900/80">
+            <div className="flex items-center justify-around h-16 px-2 rounded-full border border-white/20 bg-white/90 shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur-md dark:border-gray-700/50 dark:bg-gray-900/90">
                 <Link
                     href="/"
                     onClick={handleHomeClick}

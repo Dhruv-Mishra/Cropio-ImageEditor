@@ -5,6 +5,9 @@ const HISTORY_STORE = 'history_store';
 const SESSION_STORE = 'session_store';
 const DB_VERSION = 2;
 
+const MAX_HISTORY_ENTRIES = 20;
+const MAX_SESSIONS = 5;
+
 let cachedDB: IDBDatabase | null = null;
 let dbUnavailable = false;
 
@@ -55,7 +58,24 @@ export async function saveHistoryEntry(entry: HistoryEntry): Promise<void> {
         const db = await getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(HISTORY_STORE, 'readwrite');
-            tx.objectStore(HISTORY_STORE).put(entry);
+            const store = tx.objectStore(HISTORY_STORE);
+            store.put(entry);
+
+            // Evict oldest entries beyond limit
+            const countReq = store.count();
+            countReq.onsuccess = () => {
+                if (countReq.result > MAX_HISTORY_ENTRIES) {
+                    const allReq = store.getAll();
+                    allReq.onsuccess = () => {
+                        const entries = (allReq.result as HistoryEntry[])
+                            .sort((a, b) => b.timestamp - a.timestamp);
+                        for (let i = MAX_HISTORY_ENTRIES; i < entries.length; i++) {
+                            store.delete(entries[i].id);
+                        }
+                    };
+                }
+            };
+
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -119,7 +139,24 @@ export async function saveSession(data: SessionData): Promise<void> {
         const db = await getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(SESSION_STORE, 'readwrite');
-            tx.objectStore(SESSION_STORE).put(data);
+            const store = tx.objectStore(SESSION_STORE);
+            store.put(data);
+
+            // Evict oldest sessions beyond limit
+            const countReq = store.count();
+            countReq.onsuccess = () => {
+                if (countReq.result > MAX_SESSIONS) {
+                    const allReq = store.getAll();
+                    allReq.onsuccess = () => {
+                        const sessions = (allReq.result as SessionData[])
+                            .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+                        for (let i = MAX_SESSIONS; i < sessions.length; i++) {
+                            store.delete(sessions[i].id);
+                        }
+                    };
+                }
+            };
+
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });

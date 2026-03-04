@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import type { HistoryEntry } from '@/lib/types';
 
 function formatTimeAgo(timestamp: number): string {
@@ -96,13 +95,9 @@ function MobileMenu({ onEdit, onDelete, onClose }: MobileMenuProps) {
   }, [onClose]);
 
   return (
-    <motion.div
+    <div
       ref={menuRef}
-      initial={{ opacity: 0, scale: 0.85, y: -4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.85, y: -4 }}
-      transition={{ duration: 0.15, ease: 'easeOut' }}
-      className="mobile-menu absolute top-9 right-1 z-30 min-w-[120px] overflow-hidden rounded-xl border border-white/20 bg-white/80 shadow-lg backdrop-blur-xl dark:border-gray-700/60 dark:bg-gray-900/80"
+      className="mobile-menu absolute top-9 right-1 z-30 min-w-[120px] animate-[scaleIn_0.15s_ease-out] overflow-hidden rounded-xl border border-white/20 bg-white/80 shadow-lg backdrop-blur-xl dark:border-gray-700/60 dark:bg-gray-900/80"
       role="menu"
       aria-label="Photo actions"
     >
@@ -131,7 +126,7 @@ function MobileMenu({ onEdit, onDelete, onClose }: MobileMenuProps) {
         <TrashIcon className="h-3.5 w-3.5" />
         Delete
       </button>
-    </motion.div>
+    </div>
   );
 }
 
@@ -180,12 +175,8 @@ function HistoryCard({
   }, [setOpenMenuId]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.8, filter: 'blur(4px)' }}
-      transition={{ duration: 0.2 }}
-      className="group relative shrink-0"
+    <div
+      className="group relative shrink-0 animate-[fadeInScale_0.2s_ease-out]"
     >
       {/* Card body — clicking the image triggers edit */}
       <div
@@ -226,34 +217,30 @@ function HistoryCard({
       {/* ── Desktop hover overlay with edit + delete (sibling to avoid nested buttons) ── */}
       <div className="pointer-events-none absolute inset-0 hidden items-center justify-center gap-3 rounded-xl bg-black/0 transition-all duration-200 md:flex md:group-hover:bg-black/50">
         {/* Edit button */}
-        <motion.button
+        <button
           type="button"
-          whileHover={{ scale: 1.12 }}
-          whileTap={{ scale: 0.92 }}
           onClick={(e) => {
             e.stopPropagation();
             handleEdit();
           }}
-          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-white/30 md:group-hover:opacity-100"
+          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 hover:bg-white/30 active:scale-95 md:group-hover:opacity-100"
           aria-label="Edit photo"
         >
           <PencilIcon className="h-4 w-4" />
-        </motion.button>
+        </button>
 
         {/* Delete button */}
-        <motion.button
+        <button
           type="button"
-          whileHover={{ scale: 1.12 }}
-          whileTap={{ scale: 0.92 }}
           onClick={(e) => {
             e.stopPropagation();
             handleDelete(e);
           }}
-          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-red-500/80 md:group-hover:opacity-100"
+          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 hover:bg-red-500/80 active:scale-95 md:group-hover:opacity-100"
           aria-label="Delete photo"
         >
           <TrashIcon className="h-4 w-4" />
-        </motion.button>
+        </button>
       </div>
 
       {/* ── Mobile 3-dot menu trigger (visible below md) ── */}
@@ -268,12 +255,10 @@ function HistoryCard({
       </button>
 
       {/* ── Mobile dropdown ── */}
-      <AnimatePresence>
-        {isMenuOpen && (
-          <MobileMenu onEdit={handleEdit} onDelete={handleDelete} onClose={closeMenu} />
-        )}
-      </AnimatePresence>
-    </motion.div>
+      {isMenuOpen && (
+        <MobileMenu onEdit={handleEdit} onDelete={handleDelete} onClose={closeMenu} />
+      )}
+    </div>
   );
 }
 
@@ -288,7 +273,7 @@ interface CropHistoryProps {
   onDelete: (id: string, e: React.MouseEvent) => void;
 }
 
-export function CropHistory({ entries, onSelect, onClear, onDelete }: CropHistoryProps) {
+export const CropHistory = memo(function CropHistory({ entries, onSelect, onClear, onDelete }: CropHistoryProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   if (entries.length === 0) return null;
@@ -323,19 +308,16 @@ export function CropHistory({ entries, onSelect, onClear, onDelete }: CropHistor
             </span>
           </div>
 
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
+          <button
             onClick={onClear}
-            className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-600 transition-all duration-150 hover:scale-[1.03] hover:bg-red-50 active:scale-[0.97] dark:text-red-400 dark:hover:bg-red-950/30"
           >
             Clear All
-          </motion.button>
+          </button>
         </div>
 
         {/* Scrollable card strip */}
         <div className="scrollbar-hide -mx-4 flex gap-4 overflow-x-auto px-4 pb-2">
-          <AnimatePresence>
             {entries.map((entry) => (
               <HistoryCard
                 key={entry.id}
@@ -346,9 +328,8 @@ export function CropHistory({ entries, onSelect, onClear, onDelete }: CropHistor
                 setOpenMenuId={setOpenMenuId}
               />
             ))}
-          </AnimatePresence>
         </div>
       </div>
     </section>
   );
-}
+});

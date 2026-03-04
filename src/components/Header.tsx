@@ -57,7 +57,7 @@ export function Header() {
         initial={{ y: -30, opacity: 0, scale: 0.95 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        className="pointer-events-auto flex items-center justify-between rounded-full border border-white/20 bg-white/40 px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-xl dark:border-gray-700/50 dark:bg-gray-900/40 sm:px-6"
+        className="pointer-events-auto flex items-center justify-between rounded-full border border-white/20 bg-white/90 px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:border-gray-700/50 dark:bg-gray-900/90 sm:px-6"
       >
         {/* Brand */}
         <Link href="/" onClick={handleHomeClick} className="flex items-center gap-2.5">
