@@ -55,42 +55,49 @@ export function CropEditor({
     [naturalWidth, naturalHeight],
   );
 
-  // ---- react to aspect-ratio changes ----
+  // ---- react to aspect-ratio OR external crop-preset changes ----
 
   const isFirstRender = useRef(true);
+  const prevAspectRef = useRef(aspectRatio);
+  const prevExternalCropRef = useRef<CropRegion | null | undefined>(externalCrop);
 
   useEffect(() => {
-    // Skip adjustment on mount — the initialCrop is already correct
     if (isFirstRender.current) {
       isFirstRender.current = false;
+      prevAspectRef.current = aspectRatio;
+      prevExternalCropRef.current = externalCrop;
       return;
     }
 
-    const numAspect = ASPECT_RATIOS[aspectRatio];
-    if (numAspect !== undefined) {
-      const adjusted = adjustCropToAspect(
-        cropRef.current,
-        numAspect,
-        naturalWidth,
-        naturalHeight,
-      );
-      setCrop(adjusted);
-      onCropChange(adjusted);
-    }
-    // Only fire when the selected aspect ratio changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aspectRatio]);
+    const externalChanged = externalCrop !== prevExternalCropRef.current;
+    const aspectChanged = aspectRatio !== prevAspectRef.current;
 
-  // ---- react to external crop-preset changes ----
+    prevExternalCropRef.current = externalCrop;
+    prevAspectRef.current = aspectRatio;
 
-  useEffect(() => {
-    if (externalCrop) {
+    // External crop preset takes priority — its coordinates already match its aspect ratio
+    if (externalChanged && externalCrop) {
       setCrop(externalCrop);
       cropRef.current = externalCrop;
+      return;
     }
-    // Only fire when externalCrop reference changes
+
+    // Aspect-only change (user toggled aspect ratio selector) → adjust current crop
+    if (aspectChanged) {
+      const numAspect = ASPECT_RATIOS[aspectRatio];
+      if (numAspect !== undefined) {
+        const adjusted = adjustCropToAspect(
+          cropRef.current,
+          numAspect,
+          naturalWidth,
+          naturalHeight,
+        );
+        setCrop(adjusted);
+        onCropChange(adjusted);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalCrop]);
+  }, [externalCrop, aspectRatio]);
 
   // ---- handlers ----
 

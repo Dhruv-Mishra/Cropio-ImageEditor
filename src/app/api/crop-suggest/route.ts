@@ -51,7 +51,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(suggestion);
   } catch (error) {
-    console.error('Error in /api/crop-suggest:', error);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Error in /api/crop-suggest:', error);
+    }
     return NextResponse.json(
       { error: 'Failed to process image.' },
       { status: 500 },

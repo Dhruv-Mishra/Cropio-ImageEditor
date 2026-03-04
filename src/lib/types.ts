@@ -61,6 +61,29 @@ export interface HistoryEntry {
   blob: Blob;
 }
 
+/** Persisted editing session for page-refresh recovery. */
+export interface SessionData {
+  /** Unique session identifier (crypto.randomUUID()). */
+  id: string;
+  /** Original full-resolution image. */
+  imageBlob: Blob;
+  /** Downscaled preview image. */
+  previewBlob: Blob;
+  scaleFactor: number;
+  naturalWidth: number;
+  naturalHeight: number;
+  previewWidth: number;
+  previewHeight: number;
+  multiSuggestion: MultiCropSuggestion;
+  selectedCropType: CropType;
+  currentCrop: CropRegion;
+  aspectRatio: AspectRatioOption;
+  /** Base64 data-URL thumbnail for display in archive. */
+  thumbnailDataUrl?: string;
+  /** Timestamp for sorting/display. */
+  createdAt: number;
+}
+
 /** Map from label → numeric width/height ratio (undefined = free). */
 export const ASPECT_RATIOS: Record<AspectRatioOption, number | undefined> = {
   '1:1': 1,

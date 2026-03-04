@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadZone } from '@/components/UploadZone';
@@ -17,6 +17,7 @@ import type {
   MultiCropSuggestion,
   CropVariant,
   CropType,
+  SessionData,
 } from '@/lib/types';
 import {
   cropImage,
@@ -25,8 +26,32 @@ import {
   scaleToFullRes,
   generateThumbnailDataUrl,
 } from '@/lib/imageUtils';
-import { saveHistoryEntry, loadHistory, clearHistoryData, deleteHistoryEntry } from '@/lib/db';
+import {
+  saveHistoryEntry,
+  loadHistory,
+  clearHistoryData,
+  deleteHistoryEntry,
+  saveSession,
+  loadSession,
+  clearSession,
+  loadAllSessions,
+} from '@/lib/db';
+import { consumePendingUpload } from '@/lib/pendingUpload';
 import { useAppHaptics } from '@/lib/haptics';
+
+const ACTIVE_SESSION_KEY = 'cropai_active_session_id';
+
+/** Secure-context-safe UUID v4 generator (works on HTTP mobile too). */
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts (e.g. mobile over HTTP)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 
 type AppState = 'idle' | 'uploading' | 'editing' | 'exporting';
 
@@ -57,10 +82,24 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
 
+  // Refs to track object URLs for cleanup on unmount / re-upload
+  const fullResUrlRef = useRef<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
   // History & sharing state
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [lastExportBlob, setLastExportBlob] = useState<Blob | null>(null);
   const [canShare, setCanShare] = useState(false);
+
+  // Refs for session persistence (keep blob references without re-renders)
+  const fullResBlobRef = useRef<Blob | null>(null);
+  const previewBlobRef = useRef<Blob | null>(null);
+  const sessionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionRestoredRef = useRef(false);
+  const persistenceInitRef = useRef(false);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionCreatedAtRef = useRef<number>(0);
+  const sessionThumbnailRef = useRef<string | null>(null);
 
   // Check Web Share API support
   const checkShareSupport = useCallback(() => {
@@ -71,7 +110,165 @@ export default function Home() {
     }
   }, []);
 
-  // Load history from IndexedDB on mount
+  // ---- Session persistence helpers ----
+
+  /** Build a SessionData object from current state + blob refs. */
+  const buildSessionData = useCallback((): SessionData | null => {
+    if (
+      !sessionIdRef.current ||
+      !fullResBlobRef.current ||
+      !previewBlobRef.current ||
+      !naturalDimensions ||
+      !previewDimensions ||
+      !multiSuggestion ||
+      !currentCrop
+    )
+      return null;
+
+    return {
+      id: sessionIdRef.current,
+      imageBlob: fullResBlobRef.current,
+      previewBlob: previewBlobRef.current,
+      scaleFactor,
+      naturalWidth: naturalDimensions.width,
+      naturalHeight: naturalDimensions.height,
+      previewWidth: previewDimensions.width,
+      previewHeight: previewDimensions.height,
+      multiSuggestion,
+      selectedCropType,
+      currentCrop,
+      aspectRatio,
+      thumbnailDataUrl: sessionThumbnailRef.current ?? undefined,
+      createdAt: sessionCreatedAtRef.current || Date.now(),
+    };
+  }, [
+    scaleFactor,
+    naturalDimensions,
+    previewDimensions,
+    multiSuggestion,
+    selectedCropType,
+    currentCrop,
+    aspectRatio,
+  ]);
+
+  /** Debounced session save — 300ms after last change. */
+  const debouncedSaveSession = useCallback(() => {
+    if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    sessionSaveTimerRef.current = setTimeout(() => {
+      const data = buildSessionData();
+      if (data) saveSession(data);
+    }, 300);
+  }, [buildSessionData]);
+
+  // Persist session when editing state changes
+  // IMPORTANT: Skip the first run (mount) so we don't remove a localStorage key
+  // that the restore-on-mount effect needs to read.
+  useEffect(() => {
+    if (!persistenceInitRef.current) {
+      persistenceInitRef.current = true;
+      return;
+    }
+    if (appState === 'editing' && sessionIdRef.current) {
+      localStorage.setItem(ACTIVE_SESSION_KEY, sessionIdRef.current);
+      debouncedSaveSession();
+    } else if (appState === 'idle') {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+    // Notify other components (e.g. MobileNav) that session state changed
+    try {
+      window.dispatchEvent(new CustomEvent('cropai:session-changed'));
+    } catch { /* SSR guard */ }
+  }, [
+    appState,
+    currentCrop,
+    selectedCropType,
+    aspectRatio,
+    debouncedSaveSession,
+  ]);
+
+  // ---- Restore session helper (reusable for mount + event-driven restore) ----
+  const restoreSessionById = useCallback(async (sessionId: string) => {
+    let session: SessionData | null = null;
+    try {
+      session = await loadSession(sessionId);
+    } catch {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      toast.error('Could not access session storage. Please try uploading again.');
+      return;
+    }
+    if (!session) {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      toast.error('Session not found — it may have been deleted.');
+      return;
+    }
+    try {
+      // Revoke any existing object URLs
+      if (fullResUrlRef.current) URL.revokeObjectURL(fullResUrlRef.current);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+
+      sessionIdRef.current = session.id;
+      sessionCreatedAtRef.current = session.createdAt;
+      sessionThumbnailRef.current = session.thumbnailDataUrl ?? null;
+      const fullUrl = URL.createObjectURL(session.imageBlob);
+      const prevUrl = URL.createObjectURL(session.previewBlob);
+      fullResUrlRef.current = fullUrl;
+      previewUrlRef.current = prevUrl;
+      fullResBlobRef.current = session.imageBlob;
+      previewBlobRef.current = session.previewBlob;
+      setFullResUrl(fullUrl);
+      setPreviewUrl(prevUrl);
+      setScaleFactor(session.scaleFactor);
+      setNaturalDimensions({
+        width: session.naturalWidth,
+        height: session.naturalHeight,
+      });
+      setPreviewDimensions({
+        width: session.previewWidth,
+        height: session.previewHeight,
+      });
+      setMultiSuggestion(session.multiSuggestion);
+      setSelectedCropType(session.selectedCropType);
+      setCurrentCrop(session.currentCrop);
+      setAspectRatio(session.aspectRatio);
+      setError(null);
+      setLastExportBlob(null);
+      setAppState('editing');
+    } catch {
+      clearSession(sessionId);
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      toast.error('Failed to restore session. Please upload your image again.');
+    }
+  }, []);
+
+  // ---- Restore session on mount ----
+  useEffect(() => {
+    if (sessionRestoredRef.current) return;
+    sessionRestoredRef.current = true;
+
+    // If there's a ?load= param, skip session restore (history load takes priority)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('load')) return;
+
+    const activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!activeSessionId) return;
+
+    restoreSessionById(activeSessionId);
+  }, [restoreSessionById]);
+
+  // ---- Listen for external session-restore requests (e.g. from Archive "Continue") ----
+  const restoreSessionRef = useRef(restoreSessionById);
+  useEffect(() => { restoreSessionRef.current = restoreSessionById; }, [restoreSessionById]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const sessionId = (e as CustomEvent<string>).detail;
+      if (sessionId) restoreSessionRef.current(sessionId);
+    };
+    window.addEventListener('cropai:restore-session', handler);
+    return () => window.removeEventListener('cropai:restore-session', handler);
+  }, []);
+
+  // Load history from IndexedDB on mount + handle pending upload from /edit page
   useEffect(() => {
     loadHistory().then((data) => {
       if (data && data.length > 0) {
@@ -90,7 +287,21 @@ export default function Home() {
         }
       }
     });
+
+    // Check for a file handed off from the /edit page
+    const pendingFile = consumePendingUpload();
+    if (pendingFile) {
+      handleImageSelected(pendingFile);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cleanup object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (fullResUrlRef.current) URL.revokeObjectURL(fullResUrlRef.current);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
   }, []);
 
   // ---- Upload & API call ----
@@ -104,10 +315,17 @@ export default function Home() {
       checkShareSupport();
 
       try {
+        // Revoke old object URLs to prevent memory leaks on re-upload
+        if (fullResUrlRef.current) URL.revokeObjectURL(fullResUrlRef.current);
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+
         const fullUrl = URL.createObjectURL(file);
+        fullResUrlRef.current = fullUrl;
         setFullResUrl(fullUrl);
+        fullResBlobRef.current = file;
 
         const downscaled = await downscaleImage(file);
+        previewUrlRef.current = downscaled.previewUrl;
         setPreviewUrl(downscaled.previewUrl);
         setScaleFactor(downscaled.scaleFactor);
         setNaturalDimensions({
@@ -118,6 +336,7 @@ export default function Home() {
           width: downscaled.previewWidth,
           height: downscaled.previewHeight,
         });
+        previewBlobRef.current = downscaled.blob;
 
         const formData = new FormData();
         formData.append('image', downscaled.blob, file.name || 'image.jpg');
@@ -141,6 +360,38 @@ export default function Home() {
         setCurrentCrop(defaultCrop.cropRegion);
         setAspectRatio(defaultCrop.aspectRatio as AspectRatioOption);
         setResetKey(0);
+        // Save the current active session before starting a new one (preserve history)
+        if (sessionIdRef.current) {
+          const prevData = buildSessionData();
+          if (prevData) {
+            try { await saveSession(prevData); } catch { /* ignore */ }
+          }
+        }
+        sessionIdRef.current = generateUUID();
+        sessionCreatedAtRef.current = Date.now();
+
+        // Generate thumbnail and immediately save session to IndexedDB
+        const sessionThumbnail = await generateThumbnailDataUrl(file);
+        sessionThumbnailRef.current = sessionThumbnail;
+        const initialSessionData: SessionData = {
+          id: sessionIdRef.current,
+          imageBlob: file,
+          previewBlob: downscaled.blob,
+          scaleFactor: downscaled.scaleFactor,
+          naturalWidth: downscaled.naturalWidth,
+          naturalHeight: downscaled.naturalHeight,
+          previewWidth: downscaled.previewWidth,
+          previewHeight: downscaled.previewHeight,
+          multiSuggestion: multiResponse,
+          selectedCropType: defaultCrop.type,
+          currentCrop: defaultCrop.cropRegion,
+          aspectRatio: defaultCrop.aspectRatio as AspectRatioOption,
+          thumbnailDataUrl: sessionThumbnail,
+          createdAt: sessionCreatedAtRef.current,
+        };
+        saveSession(initialSessionData);
+        localStorage.setItem(ACTIVE_SESSION_KEY, sessionIdRef.current);
+
         setAppState('editing');
       } catch (err) {
         setError(
@@ -149,7 +400,7 @@ export default function Home() {
         setAppState('idle');
       }
     },
-    [checkShareSupport, vibrate],
+    [checkShareSupport, vibrate, buildSessionData],
   );
 
   // ---- Crop interactions ----
@@ -171,6 +422,7 @@ export default function Home() {
   const handleSelectCropType = useCallback((crop: CropVariant) => {
     setSelectedCropType(crop.type);
     setCurrentCrop(crop.cropRegion);
+    setAspectRatio(crop.aspectRatio as AspectRatioOption);
   }, []);
 
   // ---- Export ----
@@ -189,15 +441,14 @@ export default function Home() {
       // Generate thumbnail for history
       const thumbnailDataUrl = await generateThumbnailDataUrl(blob);
       const entry: HistoryEntry = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         thumbnailDataUrl,
         dimensions: { width: fullResCrop.width, height: fullResCrop.height },
         timestamp: Date.now(),
         blob,
       };
 
-      const newHistory = [entry, ...history].slice(0, 20);
-      setHistory(newHistory);
+      setHistory(prev => [entry, ...prev].slice(0, 20));
       saveHistoryEntry(entry); // Save to IndexedDB
 
       toast.success('Image exported successfully!');
@@ -206,7 +457,7 @@ export default function Home() {
     } finally {
       setAppState('editing');
     }
-  }, [currentCrop, fullResUrl, scaleFactor, history, vibrate]);
+  }, [currentCrop, fullResUrl, scaleFactor, vibrate]);
 
   // ---- Sharing ----
 
@@ -271,8 +522,27 @@ export default function Home() {
 
   const handleStartOver = useCallback(() => {
     vibrate('heavy');
-    if (fullResUrl) URL.revokeObjectURL(fullResUrl);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+
+    // Revoke object URLs safely — never let a thrown error block state reset
+    try {
+      if (fullResUrl) URL.revokeObjectURL(fullResUrl);
+    } catch { /* ignore */ }
+    try {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    } catch { /* ignore */ }
+    fullResUrlRef.current = null;
+    previewUrlRef.current = null;
+
+    // Clear session persistence
+    if (sessionIdRef.current) clearSession(sessionIdRef.current);
+    sessionIdRef.current = null;
+    sessionCreatedAtRef.current = 0;
+    sessionThumbnailRef.current = null;
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+    fullResBlobRef.current = null;
+    previewBlobRef.current = null;
+
+    // Reset all state back to idle
     setAppState('idle');
     setFullResUrl(null);
     setPreviewUrl(null);
@@ -286,7 +556,41 @@ export default function Home() {
     setError(null);
     setResetKey(0);
     setLastExportBlob(null);
+
+    // Scroll to top so the user sees the homepage hero
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [fullResUrl, previewUrl, vibrate]);
+
+  /** Navigate to idle view — session remains in IndexedDB for resume via Edit. */
+  const handleGoHome = useCallback(() => {
+    // Flush-save the current session to IndexedDB
+    const data = buildSessionData();
+    if (data) saveSession(data);
+
+    // Clear the active-session flag so nav highlights Home correctly
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+
+    // Transition to idle view
+    setAppState('idle');
+    setLastExportBlob(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Notify nav components
+    try {
+      window.dispatchEvent(new CustomEvent('cropai:session-changed'));
+    } catch { /* SSR guard */ }
+  }, [buildSessionData]);
+
+  // Keep a stable ref to the latest handleGoHome so the event listener never has gaps
+  const handleGoHomeRef = useRef(handleGoHome);
+  useEffect(() => { handleGoHomeRef.current = handleGoHome; }, [handleGoHome]);
+
+  // Stable go-home event listener — never re-subscribes, no gaps
+  useEffect(() => {
+    const handler = () => handleGoHomeRef.current();
+    window.addEventListener('cropai:go-home', handler);
+    return () => window.removeEventListener('cropai:go-home', handler);
+  }, []);
 
   // ---- Render ----
 
@@ -327,10 +631,10 @@ export default function Home() {
                   initial={{ opacity: 0, filter: 'blur(8px)', y: 20 }}
                   animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
                   transition={{ duration: 0.4, ease: 'easeOut' }}
-                  className="text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white sm:text-6xl sm:leading-tight min-h-[180px] sm:min-h-[180px] flex flex-col items-center justify-center pt-8"
+                  className="text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white sm:text-6xl sm:leading-tight min-h-[180px] sm:min-h-[180px] flex flex-col items-center justify-center pt-8 overflow-hidden"
                 >
                   <span className="pb-1">Perfect headshots,</span>
-                  <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-blue-400 dark:to-indigo-400 mt-2 block min-h-[2.5em] sm:min-h-[1.5em] w-full max-w-[90vw] break-words leading-relaxed pb-3">
+                  <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-blue-400 dark:to-indigo-400 mt-2 block min-h-[1.4em] w-full max-w-[90vw] break-words leading-relaxed pb-3 text-center">
                     <Typewriter
                       options={{
                         strings: [
@@ -456,14 +760,14 @@ export default function Home() {
                     onChange={setAspectRatio}
                   />
 
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center justify-center gap-2 w-full sm:w-auto">
                     <motion.button
                       onClick={handleResetToAi}
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       className="rounded-full border border-blue-300/50 bg-blue-50/50 px-5 py-2.5 text-sm font-medium text-blue-600 shadow-sm backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-md dark:border-blue-700/50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-800/50"
                     >
-                      Reset to AI
+                      Reset
                     </motion.button>
                     <motion.button
                       onClick={handleExport}
@@ -481,9 +785,13 @@ export default function Home() {
                       onClick={handleStartOver}
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
-                      className="rounded-full border border-red-300/50 bg-red-50 px-5 py-2.5 text-sm font-medium text-red-600 shadow-sm backdrop-blur-sm transition-all hover:bg-red-100/80 hover:shadow-md dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/60"
+                      className="rounded-full border border-red-300/50 bg-red-50 p-2.5 text-red-600 shadow-sm backdrop-blur-sm transition-all hover:bg-red-100/80 hover:shadow-md dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/60"
+                      aria-label="Clear image"
+                      title="Clear image"
                     >
-                      Clear Image
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
                     </motion.button>
                   </div>
                 </div>

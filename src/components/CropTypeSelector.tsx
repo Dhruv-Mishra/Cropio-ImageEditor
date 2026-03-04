@@ -56,7 +56,7 @@ export function CropTypeSelector({
 
       {/* Scrollable row */}
       <div
-        className="flex gap-2 overflow-x-auto px-2 py-2 -mx-1 scrollbar-hide sm:justify-center sm:gap-3"
+        className="flex gap-2 overflow-x-auto px-3 pt-2.5 pb-2 -mx-2 scrollbar-hide sm:justify-center sm:gap-3"
         role="radiogroup"
         aria-label="Crop preset"
       >

@@ -47,6 +47,7 @@ export function PhotoMarquee() {
                                             alt={`Professional portrait sample ${idx}`}
                                             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                                             draggable={false}
+                                            loading="lazy"
                                         />
                                     </div>
                                 </div>

@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CropHistory } from '@/components/CropHistory';
-import { loadHistory, clearHistoryData, deleteHistoryEntry } from '@/lib/db';
-import type { HistoryEntry } from '@/lib/types';
+import { loadHistory, clearHistoryData, deleteHistoryEntry, loadAllSessions, clearSession } from '@/lib/db';
+import type { HistoryEntry, SessionData } from '@/lib/types';
 import { useAppHaptics } from '@/lib/haptics';
 
 /* ------------------------------------------------------------------ */
@@ -275,6 +275,7 @@ function matchesDateFilter(timestamp: number, filter: string): boolean {
 
 export default function ArchivePage() {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [sessions, setSessions] = useState<SessionData[]>([]);
 
     // Filter & sort state
     const [filterAspect, setFilterAspect] = useState('all');
@@ -287,8 +288,9 @@ export default function ArchivePage() {
     const { vibrate } = useAppHaptics();
 
     useEffect(() => {
-        loadHistory().then((data) => {
-            if (data) setHistory(data);
+        Promise.all([loadHistory(), loadAllSessions()]).then(([histData, sessData]) => {
+            if (histData) setHistory(histData);
+            setSessions(sessData);
         });
     }, []);
 
@@ -314,6 +316,35 @@ export default function ArchivePage() {
             setHistory((prev) => prev.filter((item) => item.id !== id));
         },
         [vibrate]
+    );
+
+    const handleContinueSession = useCallback(
+        (session: SessionData) => {
+            vibrate('selection');
+            try {
+                localStorage.setItem('cropai_active_session_id', session.id);
+                window.dispatchEvent(new CustomEvent('cropai:session-changed'));
+            } catch { /* ignore */ }
+            // Navigate to home, then dispatch restore event so the page picks up the session
+            // even if it's already mounted (client-side nav won't remount)
+            router.push('/');
+            // Use requestAnimationFrame to ensure the route transition has started
+            requestAnimationFrame(() => {
+                window.dispatchEvent(
+                    new CustomEvent('cropai:restore-session', { detail: session.id }),
+                );
+            });
+        },
+        [router, vibrate],
+    );
+
+    const handleDeleteSession = useCallback(
+        async (id: string) => {
+            vibrate('light');
+            await clearSession(id);
+            setSessions((prev) => prev.filter((s) => s.id !== id));
+        },
+        [vibrate],
     );
 
     /* ---- build filtered + sorted list ---- */
@@ -464,7 +495,71 @@ export default function ArchivePage() {
                 </div>
             )}
 
-            {/* Content */}
+            {/* Active Sessions */}
+            {sessions.length > 0 && (
+                <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 mb-10">
+                    <h2 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">
+                        Saved Sessions
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                        {sessions.map((session) => (
+                            <motion.div
+                                key={session.id}
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="group relative overflow-hidden rounded-xl border border-white/20 bg-white/60 shadow-sm backdrop-blur-md transition-shadow hover:shadow-lg dark:border-gray-700/50 dark:bg-gray-900/60"
+                            >
+                                {/* Thumbnail */}
+                                <div className="relative aspect-[3/4] w-full overflow-hidden bg-gray-100 dark:bg-gray-800">
+                                    {session.thumbnailDataUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                            src={session.thumbnailDataUrl}
+                                            alt="Session preview"
+                                            className="h-full w-full object-cover"
+                                            draggable={false}
+                                        />
+                                    ) : (
+                                        <div className="flex h-full items-center justify-center">
+                                            <svg className="h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91M6.75 3h10.5A2.25 2.25 0 0119.5 5.25v13.5A2.25 2.25 0 0117.25 21H6.75A2.25 2.25 0 014.5 18.75V5.25A2.25 2.25 0 016.75 3z" />
+                                            </svg>
+                                        </div>
+                                    )}
+
+                                    {/* Overlay with actions */}
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                                        <button
+                                            onClick={() => handleContinueSession(session)}
+                                            className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105"
+                                        >
+                                            Continue
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteSession(session.id)}
+                                            className="rounded-full bg-red-600/80 px-3 py-1 text-[10px] font-semibold text-white shadow transition-transform hover:scale-105"
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Info */}
+                                <div className="p-2">
+                                    <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                                        {session.selectedCropType} · {session.aspectRatio}
+                                    </p>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                        {new Date(session.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                </div>
+                            </motion.div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Export History */}
             {filteredHistory.length > 0 ? (
                 <CropHistory
                     entries={filteredHistory}
@@ -476,7 +571,7 @@ export default function ArchivePage() {
                 <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 text-center py-20">
                     <p className="text-gray-500 dark:text-gray-400">No exports match your current filters.</p>
                 </div>
-            ) : (
+            ) : sessions.length === 0 ? (
                 <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 text-center py-20">
                     <div className="inline-flex h-20 w-20 items-center justify-center rounded-2xl bg-gray-100 dark:bg-gray-800/50 mb-6">
                         <svg
@@ -491,7 +586,7 @@ export default function ArchivePage() {
                     </div>
                     <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Nothing to see here</h2>
                     <p className="text-gray-500 dark:text-gray-400 mb-8 max-w-sm mx-auto">
-                        You haven&apos;t exported any portrait crops yet. Your past exports will appear here automatically.
+                        You haven&apos;t exported any portrait crops yet. Your saved sessions and exports will appear here.
                     </p>
                     <button
                         onClick={() => {
@@ -503,7 +598,7 @@ export default function ArchivePage() {
                         Start Creating
                     </button>
                 </div>
-            )}
+            ) : null}
         </div>
     );
 }

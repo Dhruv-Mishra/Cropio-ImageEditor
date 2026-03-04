@@ -188,14 +188,22 @@ function HistoryCard({
       className="group relative shrink-0"
     >
       {/* Card body — clicking the image triggers edit */}
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('.action-btn') || target.closest('.mobile-menu')) return;
           onSelect?.(entry);
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect?.(entry);
+          }
+        }}
         title="Click to load into editor"
-        className="relative h-full w-full overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-sm transition-all duration-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
+        className="relative h-full w-full cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-sm transition-all duration-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
       >
         {/* Thumbnail */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -206,41 +214,6 @@ function HistoryCard({
           draggable={false}
         />
 
-        {/* ── Desktop hover overlay with edit + delete ── */}
-        <div className="pointer-events-none absolute inset-0 hidden items-center justify-center gap-3 bg-black/0 transition-all duration-200 md:flex md:group-hover:bg-black/50">
-          {/* Edit button */}
-          <motion.span
-            whileHover={{ scale: 1.12 }}
-            whileTap={{ scale: 0.92 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleEdit();
-            }}
-            className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-white/30 md:group-hover:opacity-100"
-            role="button"
-            aria-label="Edit photo"
-            tabIndex={0}
-          >
-            <PencilIcon className="h-4 w-4" />
-          </motion.span>
-
-          {/* Delete button */}
-          <motion.span
-            whileHover={{ scale: 1.12 }}
-            whileTap={{ scale: 0.92 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete(e as unknown as React.MouseEvent);
-            }}
-            className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-red-500/80 md:group-hover:opacity-100"
-            role="button"
-            aria-label="Delete photo"
-            tabIndex={0}
-          >
-            <TrashIcon className="h-4 w-4" />
-          </motion.span>
-        </div>
-
         {/* Bottom gradient info bar */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-2.5 pb-2 pt-6">
           <p className="text-[10px] font-medium text-white/90">
@@ -248,7 +221,40 @@ function HistoryCard({
           </p>
           <p className="text-[10px] text-white/60">{formatTimeAgo(entry.timestamp)}</p>
         </div>
-      </button>
+      </div>
+
+      {/* ── Desktop hover overlay with edit + delete (sibling to avoid nested buttons) ── */}
+      <div className="pointer-events-none absolute inset-0 hidden items-center justify-center gap-3 rounded-xl bg-black/0 transition-all duration-200 md:flex md:group-hover:bg-black/50">
+        {/* Edit button */}
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.12 }}
+          whileTap={{ scale: 0.92 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleEdit();
+          }}
+          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-white/30 md:group-hover:opacity-100"
+          aria-label="Edit photo"
+        >
+          <PencilIcon className="h-4 w-4" />
+        </motion.button>
+
+        {/* Delete button */}
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.12 }}
+          whileTap={{ scale: 0.92 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDelete(e);
+          }}
+          className="action-btn pointer-events-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/20 text-white opacity-0 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-red-500/80 md:group-hover:opacity-100"
+          aria-label="Delete photo"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </motion.button>
+      </div>
 
       {/* ── Mobile 3-dot menu trigger (visible below md) ── */}
       <button

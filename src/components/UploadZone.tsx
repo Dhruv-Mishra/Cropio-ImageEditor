@@ -50,12 +50,14 @@ export function UploadZone({ onImageSelected }: UploadZoneProps) {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) processFile(file);
+      // Reset input so re-selecting the same file triggers onChange
+      e.target.value = '';
     },
     [processFile],
   );
 
   return (
-    <div className="flex w-full justify-center px-4">
+    <div className="flex w-full flex-col items-center justify-center px-4">
       <motion.div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
