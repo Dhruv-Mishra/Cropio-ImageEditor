@@ -34,16 +34,19 @@ export function MobileNav() {
     const handleHomeClick = useCallback(
         (e: React.MouseEvent<HTMLAnchorElement>) => {
             vibrate('light');
-            // If already on "/" and there's an active editing session, archive it
-            if (pathname === '/') {
-                try {
-                    if (localStorage.getItem(ACTIVE_SESSION_KEY)) {
-                        e.preventDefault();
-                        window.dispatchEvent(new CustomEvent('cropai:go-home'));
-                    }
-                } catch {
-                    /* localStorage unavailable */
+            try {
+                if (pathname === '/' && localStorage.getItem(ACTIVE_SESSION_KEY)) {
+                    // On "/" with an active session — archive it, show idle view
+                    e.preventDefault();
+                    window.dispatchEvent(new CustomEvent('cropai:go-home'));
+                } else if (pathname !== '/') {
+                    // Navigating home from another page — clear active session flag
+                    // so the home page mounts fresh (idle) instead of auto-restoring
+                    localStorage.removeItem(ACTIVE_SESSION_KEY);
+                    window.dispatchEvent(new CustomEvent('cropai:session-changed'));
                 }
+            } catch {
+                /* localStorage unavailable */
             }
         },
         [pathname, vibrate],
