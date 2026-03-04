@@ -24,20 +24,16 @@ export function CropTypeSelector({
 }: CropTypeSelectorProps) {
   const { vibrate } = useAppHaptics();
 
-  // Pre-compute crop overlay positions as percentages
-  const overlays = useMemo(() => {
-    const map = new Map<
-      CropType,
-      { left: string; top: string; width: string; height: string }
-    >();
+  // Pre-compute clip-path inset values for each crop variant (GPU-accelerated)
+  const clipPaths = useMemo(() => {
+    const map = new Map<CropType, string>();
     for (const crop of crops) {
       const { x, y, width, height } = crop.cropRegion;
-      map.set(crop.type, {
-        left: `${(x / imageWidth) * 100}%`,
-        top: `${(y / imageHeight) * 100}%`,
-        width: `${(width / imageWidth) * 100}%`,
-        height: `${(height / imageHeight) * 100}%`,
-      });
+      const top = (y / imageHeight) * 100;
+      const right = ((imageWidth - x - width) / imageWidth) * 100;
+      const bottom = ((imageHeight - y - height) / imageHeight) * 100;
+      const left = (x / imageWidth) * 100;
+      map.set(crop.type, `inset(${top}% ${right}% ${bottom}% ${left}%)`);
     }
     return map;
   }, [crops, imageWidth, imageHeight]);
@@ -62,7 +58,6 @@ export function CropTypeSelector({
       >
         {crops.map((crop) => {
           const isSelected = selectedType === crop.type;
-          const overlay = overlays.get(crop.type);
 
           return (
             <button
@@ -90,8 +85,9 @@ export function CropTypeSelector({
                 />
               )}
 
-              {/* Thumbnail with crop overlay */}
-              <div className="relative z-10 w-full overflow-hidden rounded-lg border border-white/20 dark:border-gray-700/40"
+              {/* Full image with crop region highlighted */}
+              <div
+                className="relative z-10 w-full overflow-hidden rounded-lg border border-white/20 dark:border-gray-700/40"
                 style={{ aspectRatio: `${imageWidth} / ${imageHeight}`, maxHeight: '60px' }}
               >
                 {/* Dimmed full image */}
@@ -100,37 +96,17 @@ export function CropTypeSelector({
                   src={imageSrc}
                   alt=""
                   draggable={false}
-                  className="h-full w-full object-cover brightness-50"
+                  className="h-full w-full object-cover brightness-[0.35]"
                 />
-
-                {/* Bright crop region rectangle */}
-                {overlay && (
-                  <div
-                    className="pointer-events-none absolute border border-blue-400/80 bg-white/10 transition-all duration-200"
-                    style={{
-                      left: overlay.left,
-                      top: overlay.top,
-                      width: overlay.width,
-                      height: overlay.height,
-                    }}
-                  >
-                    {/* Reveal the cropped portion at full brightness */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={imageSrc}
-                      alt=""
-                      draggable={false}
-                      className="absolute h-full w-full object-cover"
-                      style={{
-                        width: `${(imageWidth / crop.cropRegion.width) * 100}%`,
-                        height: `${(imageHeight / crop.cropRegion.height) * 100}%`,
-                        left: `${-(crop.cropRegion.x / crop.cropRegion.width) * 100}%`,
-                        top: `${-(crop.cropRegion.y / crop.cropRegion.height) * 100}%`,
-                        maxWidth: 'none',
-                      }}
-                    />
-                  </div>
-                )}
+                {/* Bright crop region via clip-path (GPU-accelerated) */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageSrc}
+                  alt=""
+                  draggable={false}
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ clipPath: clipPaths.get(crop.type) }}
+                />
               </div>
 
               {/* Label + confidence */}

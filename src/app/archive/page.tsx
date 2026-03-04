@@ -303,7 +303,7 @@ export default function ArchivePage() {
     const handleSelect = useCallback(
         (entry: HistoryEntry) => {
             vibrate(50);
-            router.push(`/?load=${entry.id}`);
+            router.push(`/edit?load=${entry.id}`);
         },
         [router, vibrate]
     );
@@ -327,13 +327,7 @@ export default function ArchivePage() {
             } catch { /* ignore */ }
             // Navigate to home, then dispatch restore event so the page picks up the session
             // even if it's already mounted (client-side nav won't remount)
-            router.push('/');
-            // Use requestAnimationFrame to ensure the route transition has started
-            requestAnimationFrame(() => {
-                window.dispatchEvent(
-                    new CustomEvent('cropai:restore-session', { detail: session.id }),
-                );
-            });
+            router.push('/edit');
         },
         [router, vibrate],
     );
@@ -528,18 +522,26 @@ export default function ArchivePage() {
                                     )}
 
                                     {/* Overlay with actions */}
-                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                                    <div className="absolute inset-0 flex items-center justify-center gap-3 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
                                         <button
                                             onClick={() => handleContinueSession(session)}
-                                            className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow-lg transition-transform hover:scale-105"
+                                            className="rounded-full bg-blue-600 p-2.5 text-white shadow-lg transition-transform hover:scale-110"
+                                            aria-label="Continue editing"
+                                            title="Continue editing"
                                         >
-                                            Continue
+                                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                                            </svg>
                                         </button>
                                         <button
                                             onClick={() => handleDeleteSession(session.id)}
-                                            className="rounded-full bg-red-600/80 px-3 py-1 text-[10px] font-semibold text-white shadow transition-transform hover:scale-105"
+                                            className="rounded-full bg-red-600/80 p-2.5 text-white shadow transition-transform hover:scale-110"
+                                            aria-label="Delete session"
+                                            title="Delete session"
                                         >
-                                            Delete
+                                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
                                         </button>
                                     </div>
                                 </div>
@@ -591,7 +593,7 @@ export default function ArchivePage() {
                     <button
                         onClick={() => {
                             vibrate('light');
-                            router.push('/');
+                            router.push('/edit');
                         }}
                         className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/30 transition-all hover:scale-105 hover:shadow-xl hover:from-blue-500 hover:to-indigo-500"
                     >

@@ -1,60 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAppHaptics } from '@/lib/haptics';
 
-const ACTIVE_SESSION_KEY = 'cropai_active_session_id';
-
 export function MobileNav() {
     const pathname = usePathname();
     const { vibrate } = useAppHaptics();
-    const [hasActiveSession, setHasActiveSession] = useState(false);
-
-    // Track active session state via localStorage + custom events
-    useEffect(() => {
-        const check = () => {
-            try {
-                setHasActiveSession(!!localStorage.getItem(ACTIVE_SESSION_KEY));
-            } catch {
-                setHasActiveSession(false);
-            }
-        };
-        check();
-        window.addEventListener('storage', check);
-        const handler = () => setTimeout(check, 50);
-        window.addEventListener('cropai:session-changed', handler);
-        return () => {
-            window.removeEventListener('storage', check);
-            window.removeEventListener('cropai:session-changed', handler);
-        };
-    }, []);
 
     const handleHomeClick = useCallback(
-        (e: React.MouseEvent<HTMLAnchorElement>) => {
+        () => {
             vibrate('light');
-            try {
-                if (pathname === '/' && localStorage.getItem(ACTIVE_SESSION_KEY)) {
-                    // On "/" with an active session — archive it, show idle view
-                    e.preventDefault();
-                    window.dispatchEvent(new CustomEvent('cropai:go-home'));
-                } else if (pathname !== '/') {
-                    // Navigating home from another page — clear active session flag
-                    // so the home page mounts fresh (idle) instead of auto-restoring
-                    localStorage.removeItem(ACTIVE_SESSION_KEY);
-                    window.dispatchEvent(new CustomEvent('cropai:session-changed'));
-                }
-            } catch {
-                /* localStorage unavailable */
-            }
         },
-        [pathname, vibrate],
+        [vibrate],
     );
 
-    // Determine which tab is highlighted
-    const isEditActive = pathname === '/edit' || (pathname === '/' && hasActiveSession);
-    const isHomeActive = pathname === '/' && !hasActiveSession;
+    // Route-based tab highlighting
+    const isEditActive = pathname === '/edit';
+    const isHomeActive = pathname === '/';
     const activeClass = 'text-blue-600 dark:text-blue-400';
     const inactiveClass = 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100';
 
@@ -74,12 +38,7 @@ export function MobileNav() {
 
                 <Link
                     href="/edit"
-                    onClick={(e) => {
-                        vibrate('light');
-                        if (pathname === '/' && hasActiveSession) {
-                            e.preventDefault();
-                        }
-                    }}
+                    onClick={() => vibrate('light')}
                     className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${isEditActive ? activeClass : inactiveClass}`}
                 >
                     <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">

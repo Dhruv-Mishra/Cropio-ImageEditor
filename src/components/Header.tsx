@@ -1,55 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ThemeToggle } from './ThemeToggle';
 
-const ACTIVE_SESSION_KEY = 'cropai_active_session_id';
-
 export function Header() {
   const pathname = usePathname();
-  const [hasActiveSession, setHasActiveSession] = useState(false);
 
-  // Track active session state via localStorage + custom events
-  useEffect(() => {
-    const check = () => {
-      try {
-        setHasActiveSession(!!localStorage.getItem(ACTIVE_SESSION_KEY));
-      } catch {
-        setHasActiveSession(false);
-      }
-    };
-    check();
-    window.addEventListener('storage', check);
-    const handler = () => setTimeout(check, 50);
-    window.addEventListener('cropai:session-changed', handler);
-    return () => {
-      window.removeEventListener('storage', check);
-      window.removeEventListener('cropai:session-changed', handler);
-    };
+  const handleHomeClick = useCallback(() => {
+    // Landing page — no special handling needed
   }, []);
-
-  const handleHomeClick = useCallback(
-    (e: React.MouseEvent<HTMLAnchorElement>) => {
-      try {
-        if (pathname === '/' && localStorage.getItem(ACTIVE_SESSION_KEY)) {
-          // On "/" with an active session — archive the session, show idle view
-          e.preventDefault();
-          window.dispatchEvent(new CustomEvent('cropai:go-home'));
-        } else if (pathname !== '/') {
-          // Navigating home from another page — clear active session flag
-          // so the home page mounts fresh (idle) instead of auto-restoring
-          localStorage.removeItem(ACTIVE_SESSION_KEY);
-          window.dispatchEvent(new CustomEvent('cropai:session-changed'));
-        }
-      } catch {
-        /* localStorage unavailable — fall through to normal nav */
-      }
-    },
-    [pathname],
-  );
 
   return (
     <div className="sticky top-4 z-50 mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8 pointer-events-none transition-all">
@@ -79,7 +41,7 @@ export function Header() {
             href="/"
             onClick={handleHomeClick}
             className={`text-sm font-medium transition-colors ${
-              pathname === '/' && !hasActiveSession
+              pathname === '/'
                 ? 'text-blue-600 dark:text-blue-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
             }`}
@@ -88,13 +50,8 @@ export function Header() {
           </Link>
           <Link
             href="/edit"
-            onClick={(e) => {
-              if (pathname === '/' && hasActiveSession) {
-                e.preventDefault();
-              }
-            }}
             className={`text-sm font-medium transition-colors ${
-              pathname === '/edit' || (pathname === '/' && hasActiveSession)
+              pathname === '/edit'
                 ? 'text-blue-600 dark:text-blue-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
             }`}
