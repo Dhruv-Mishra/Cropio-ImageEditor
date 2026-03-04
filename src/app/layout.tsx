@@ -63,6 +63,13 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Preload critical background image */}
+        <link
+          rel="preload"
+          href="/images/Background.webp"
+          as="image"
+          type="image/webp"
+        />
         {/* Suppress errors from Brave/crypto wallet extensions injecting window.ethereum */}
         <script
           dangerouslySetInnerHTML={{
