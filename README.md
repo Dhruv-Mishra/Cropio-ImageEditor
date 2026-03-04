@@ -1,5 +1,7 @@
 <div align="center">
 
+![Image](https://github.com/user-attachments/assets/d0024198-a6a5-47c0-b58f-ee59d64bb578)
+
 # ✂️ Cropio
 
 **AI-Powered Portrait Photo Cropper**
