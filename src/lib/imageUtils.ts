@@ -179,6 +179,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 export async function generateThumbnailDataUrl(
   blob: Blob,
   maxSize: number = 200,
+  quality: number = 0.8,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
@@ -204,7 +205,7 @@ export async function generateThumbnailDataUrl(
       }
 
       ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
+      resolve(canvas.toDataURL('image/webp', quality));
     };
 
     img.onerror = () => {

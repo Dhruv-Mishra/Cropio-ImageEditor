@@ -371,7 +371,8 @@ export default function Home() {
         sessionCreatedAtRef.current = Date.now();
 
         // Generate thumbnail and immediately save session to IndexedDB
-        const sessionThumbnail = await generateThumbnailDataUrl(file);
+        // Use 480px for session cards (higher res for archive grid + retina displays)
+        const sessionThumbnail = await generateThumbnailDataUrl(file, 480);
         sessionThumbnailRef.current = sessionThumbnail;
         const initialSessionData: SessionData = {
           id: sessionIdRef.current,
