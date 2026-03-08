@@ -172,6 +172,9 @@ if [ "$SKIP_BUILD" = false ]; then
   echo "▶ [3/9] Building Next.js (standalone)…"
   cd "$APP_DIR"
 
+  # Clean previous build artifacts (may be root-owned from prior cp -r)
+  rm -rf "${APP_DIR}/.next"
+
   # Build with resource limits
   sudo -u "$APP_USER" \
     nice -n "$BUILD_NICE" \
@@ -193,6 +196,9 @@ if [ "$SKIP_BUILD" = false ]; then
 
   # Copy .env.local so the standalone server can read it
   cp "${APP_DIR}/.env.local" "${STANDALONE_DIR}/.env.local"
+
+  # Fix ownership so future builds (as APP_USER) can clean up
+  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/.next"
 
   echo "  Standalone build ready at ${STANDALONE_DIR}"
 else
