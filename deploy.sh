@@ -207,23 +207,26 @@ fi
 
 # ── 4. Python backend setup ────────────────────────────────────────
 echo "▶ [4/9] Setting up Python backend…"
-cd "${APP_DIR}/backend"
+BACKEND_DIR="${APP_DIR}/backend"
 
-if [ ! -d "venv" ]; then
+if [ ! -d "${BACKEND_DIR}/venv" ]; then
   echo "  Creating Python virtual environment…"
-  sudo -u "$APP_USER" python3 -m venv venv
+  sudo -u "$APP_USER" python3 -m venv "${BACKEND_DIR}/venv"
+fi
+
+# Verify venv was created
+if [ ! -f "${BACKEND_DIR}/venv/bin/activate" ]; then
+  echo "ERROR: Python venv creation failed at ${BACKEND_DIR}/venv" >&2
+  exit 1
 fi
 
 echo "  Installing Python dependencies (CPU-only PyTorch for ARM)…"
-BACKEND_DIR="${APP_DIR}/backend"
 sudo -u "$APP_USER" bash -c "
-  cd '${BACKEND_DIR}'
-  source venv/bin/activate
+  source '${BACKEND_DIR}/venv/bin/activate'
   pip install --quiet --upgrade pip
   pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || true
-  pip install --quiet -r requirements.txt
+  pip install --quiet -r '${BACKEND_DIR}/requirements.txt'
 "
-cd "$APP_DIR"
 echo "  Python backend ready."
 
 # ── 5. File permissions ────────────────────────────────────────────
