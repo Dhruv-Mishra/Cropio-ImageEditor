@@ -21,7 +21,6 @@ export type CapturePhase =
   | 'requesting-camera'
   | 'tracking'
   | 'holding'
-  | 'captured'
   | 'complete'
   | 'uploading'
   | 'done'

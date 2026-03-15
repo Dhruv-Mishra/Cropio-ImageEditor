@@ -51,7 +51,8 @@ export function HeadshotViewfinder({
   }, [videoRef, syncCanvasSize]);
 
   const isHolding = phase === 'holding' && isOnTarget;
-  const secondsLeft = Math.ceil((1 - holdProgress) * (HOLD_DURATION_MS / 1000));
+  const secondsRemaining = (1 - holdProgress) * (HOLD_DURATION_MS / 1000);
+  const secondsLeft = Math.max(1, Math.ceil(secondsRemaining - 0.05));
   const circumference = 2 * Math.PI * 44;
   const strokeOffset = circumference * (1 - holdProgress);
 

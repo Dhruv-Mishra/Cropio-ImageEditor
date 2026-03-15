@@ -41,6 +41,7 @@ export function useCaptureSequence(
   const holdStartRef = useRef<number | null>(null);
   const capturedInStepRef = useRef(false);
   const offTargetCountRef = useRef(0);
+  const flashIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /** Update both the ref mirror and React state atomically. */
   const updateState = useCallback((next: CaptureState) => {
@@ -156,26 +157,18 @@ export function useCaptureSequence(
       const onTarget = isPoseOnTarget(result.pose, target);
 
       // Mirror X for display (canvas is not CSS-flipped, but video is)
-      const displayX = canvas ? canvas.width - result.foreheadX : result.foreheadX;
-      const displayY = result.foreheadY;
-
-      // Compute face-perpendicular direction (face center → forehead)
       const mirroredCenterX = canvas ? canvas.width - result.faceCenterX : result.faceCenterX;
-      const fUpX = displayX - mirroredCenterX;
-      const fUpY = displayY - result.faceCenterY;
-      const fUpMag = Math.sqrt(fUpX * fUpX + fUpY * fUpY) || 1;
 
       if (ctx && canvas) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawPoseArrow(
-          ctx, displayX, displayY, result.pose, onTarget,
+          ctx, onTarget,
           canvas.width, canvas.height, target.yaw, target.pitch,
-          fUpX / fUpMag, fUpY / fUpMag,
           mirroredCenterX, result.faceCenterY, result.faceScale,
         );
       }
 
-      // Not on target — allow grace period (3 consecutive frames) before resetting hold
+      // Not on target — allow grace period before resetting hold
       if (!onTarget) {
         if (holdStartRef.current !== null) {
           offTargetCountRef.current++;
@@ -184,6 +177,9 @@ export function useCaptureSequence(
             capturedInStepRef.current = false;
             offTargetCountRef.current = 0;
             updateState({ ...prev, phase: 'tracking', holdProgress: 0, isOnTarget: false });
+          } else {
+            // Grace period — explicitly keep isOnTarget true so UI border stays green
+            updateState({ ...prev, isOnTarget: true });
           }
         } else {
           updateState({ ...prev, phase: 'tracking', holdProgress: 0, isOnTarget: false });
@@ -204,55 +200,59 @@ export function useCaptureSequence(
 
       // Hold complete — capture!
       if (progress >= 1 && !capturedInStepRef.current) {
-        capturedInStepRef.current = true;
         const dataUrl = captureFrame();
 
-        if (dataUrl) {
-          const newFrames = [...prev.frames, { dataUrl, poseLabel: target.label }];
+        if (!dataUrl) {
+          // captureFrame failed — retry next frame
+          return;
+        }
 
-          // Flash animation
-          if (ctx && canvas) {
-            let flashAlpha = 1;
-            const flashInterval = setInterval(() => {
-              flashAlpha -= 0.05;
-              if (flashAlpha <= 0) {
-                clearInterval(flashInterval);
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-              } else {
-                drawCaptureFlash(ctx, canvas.width, canvas.height, flashAlpha);
-              }
-            }, 30);
-          }
+        capturedInStepRef.current = true;
+        const newFrames = [...prev.frames, { dataUrl, poseLabel: target.label }];
 
-          const nextStep = prev.currentStep + 1;
+        // Flash animation (ref-tracked for cleanup)
+        if (flashIntervalRef.current) clearInterval(flashIntervalRef.current);
+        if (ctx && canvas) {
+          let flashAlpha = 1;
+          flashIntervalRef.current = setInterval(() => {
+            flashAlpha -= 0.08;
+            if (flashAlpha <= 0) {
+              if (flashIntervalRef.current) clearInterval(flashIntervalRef.current);
+              flashIntervalRef.current = null;
+            } else {
+              drawCaptureFlash(ctx, canvas.width, canvas.height, flashAlpha);
+            }
+          }, 30);
+        }
 
-          if (nextStep >= POSE_SEQUENCE.length) {
-            updateState({
-              ...prev,
-              phase: 'complete',
-              frames: newFrames,
-              currentStep: nextStep,
-              holdProgress: 1,
-              isOnTarget: true,
-              instruction: 'All poses captured!',
-            });
-            return;
-          }
+        const nextStep = prev.currentStep + 1;
 
-          // Advance to next step
-          capturedInStepRef.current = false;
-          holdStartRef.current = null;
+        if (nextStep >= POSE_SEQUENCE.length) {
           updateState({
             ...prev,
-            phase: 'tracking',
+            phase: 'complete',
             frames: newFrames,
             currentStep: nextStep,
-            holdProgress: 0,
-            isOnTarget: false,
-            instruction: POSE_SEQUENCE[nextStep].instruction,
+            holdProgress: 1,
+            isOnTarget: true,
+            instruction: 'All poses captured!',
           });
           return;
         }
+
+        // Advance to next step
+        capturedInStepRef.current = false;
+        holdStartRef.current = null;
+        updateState({
+          ...prev,
+          phase: 'tracking',
+          frames: newFrames,
+          currentStep: nextStep,
+          holdProgress: 0,
+          isOnTarget: false,
+          instruction: POSE_SEQUENCE[nextStep].instruction,
+        });
+        return;
       }
 
       // Still holding — update progress
@@ -305,6 +305,10 @@ export function useCaptureSequence(
     holdStartRef.current = null;
     capturedInStepRef.current = false;
     offTargetCountRef.current = 0;
+    if (flashIntervalRef.current) {
+      clearInterval(flashIntervalRef.current);
+      flashIntervalRef.current = null;
+    }
     updateState(INITIAL_STATE);
   }, [updateState]);
 

@@ -90,9 +90,9 @@ export function useMediaPipeFace(
         landmarkerRef.current = faceLandmarker;
         setIsReady(true);
       } catch (cpuErr) {
-        setError(
-          cpuErr instanceof Error ? cpuErr.message : 'Failed to load face tracking model',
-        );
+        const msg = cpuErr instanceof Error ? cpuErr.message : 'Failed to load face tracking model';
+        setError(msg);
+        throw new Error(msg);
       }
     } finally {
       setIsLoading(false);
@@ -114,6 +114,7 @@ export function useMediaPipeFace(
     const processCanvas = document.createElement('canvas');
     const processCtx = processCanvas.getContext('2d')!;
     const PROCESS_WIDTH = 640;
+    let processCanvasSized = false;
 
     const processFrame = () => {
       if (!running || !video || video.readyState < 2) {
@@ -128,11 +129,14 @@ export function useMediaPipeFace(
       }
       lastTimestamp = now;
 
-      // Downscale video frame for faster landmark detection
+      // Size canvas once (avoids per-frame reallocation)
       const scale = PROCESS_WIDTH / video.videoWidth;
       const processHeight = Math.round(video.videoHeight * scale);
-      processCanvas.width = PROCESS_WIDTH;
-      processCanvas.height = processHeight;
+      if (!processCanvasSized) {
+        processCanvas.width = PROCESS_WIDTH;
+        processCanvas.height = processHeight;
+        processCanvasSized = true;
+      }
       processCtx.drawImage(video, 0, 0, PROCESS_WIDTH, processHeight);
 
       try {

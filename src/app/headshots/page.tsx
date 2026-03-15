@@ -24,7 +24,7 @@ export default function HeadshotsPage() {
 
   const isTracking = state.phase === 'tracking' || state.phase === 'holding';
 
-  const { initFaceMesh, isLoading: modelLoading, isReady: modelReady, error: modelError } =
+  const { initFaceMesh, isLoading: modelLoading, error: modelError } =
     useMediaPipeFace(videoRef, isTracking, processFrame);
 
   /**
@@ -39,14 +39,20 @@ export default function HeadshotsPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not start camera';
       toast.error(msg);
+      // Reset to idle so user can retry
+      reset();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     }
-  }, [startCamera, initFaceMesh, startSequence]);
+  }, [startCamera, initFaceMesh, startSequence, reset]);
 
   /**
    * When sequence is complete, auto-trigger upload.
    */
   useEffect(() => {
     if (state.phase === 'complete' && state.frames.length > 0) {
+      // Stop the camera stream to save resources during upload
+      streamRef.current?.getTracks().forEach((t) => t.stop());
       uploadFrames(state.frames);
     }
   }, [state.phase, state.frames, uploadFrames]);
@@ -121,7 +127,7 @@ export default function HeadshotsPage() {
           <div className="flex flex-col items-center gap-3">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              {isRequestingCamera ? 'Requesting camera access…' : 'Loading face tracking model…'}
+              {modelLoading ? 'Loading face tracking model…' : 'Requesting camera access…'}
             </p>
           </div>
         )}
@@ -155,9 +161,7 @@ export default function HeadshotsPage() {
             {isTracking && (
               <HeadshotHUD
                 currentStep={state.currentStep}
-                holdProgress={state.holdProgress}
                 isOnTarget={state.isOnTarget}
-                hasFace={true}
               />
             )}
 

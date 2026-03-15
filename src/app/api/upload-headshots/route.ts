@@ -64,13 +64,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // TODO: Process images — save to disk, forward to an AI pipeline, etc.
-    // For now, this is a stub that acknowledges receipt.
-    console.log(
-      `[upload-headshots] Received ${body.images.length} headshot(s):`,
-      body.images.map((img) => img.pose),
-    );
-
     return NextResponse.json({
       success: true,
       count: body.images.length,

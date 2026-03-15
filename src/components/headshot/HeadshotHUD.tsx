@@ -11,9 +11,7 @@ export function HeadshotHUD({
   isOnTarget,
 }: {
   currentStep: number;
-  holdProgress: number;
   isOnTarget: boolean;
-  hasFace: boolean;
 }) {
   const totalSteps = POSE_SEQUENCE.length;
 
