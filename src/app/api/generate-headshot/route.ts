@@ -1,26 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Client, handle_file } from '@gradio/client';
 import { HEADSHOT_STYLES } from '@/lib/headshot/templates';
-
-const HF_SPACE = 'ByteDance/DreamO';
-const TIMEOUT_MS = 180_000; // 3 minutes (ZeroGPU cold-start + generation)
-
-/** Discover the correct API endpoint name from the Space. */
-async function discoverEndpoint(client: InstanceType<typeof Client>): Promise<string> {
-  try {
-    const api = await client.view_api();
-    const endpoints = Object.keys(api.named_endpoints || {});
-    console.log('[generate-headshot] Available endpoints:', endpoints);
-    const match = endpoints.find(
-      (ep) => ep.toLowerCase().includes('generate') || ep.toLowerCase().includes('predict'),
-    );
-    if (match) return match;
-    if (endpoints.length > 0) return endpoints[0];
-  } catch (err) {
-    console.warn('[generate-headshot] view_api failed, using fallback:', err);
-  }
-  return '/predict';
-}
+import {
+  generateWithFallback,
+  classifyError,
+  extractErrorMessage,
+} from '@/lib/headshot/providers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,90 +30,27 @@ export async function POST(request: NextRequest) {
     const sourceBuffer = Buffer.from(base64Data, 'base64');
     const sourceBlob = new Blob([new Uint8Array(sourceBuffer)], { type: 'image/webp' });
 
-    const client = await Client.connect(HF_SPACE);
-    const endpoint = await discoverEndpoint(client);
-    console.log('[generate-headshot] Using endpoint:', endpoint);
+    // Cascade through providers (DreamO → PuLID → optional Replicate)
+    const result = await generateWithFallback(sourceBlob, style.prompt);
 
-    // DreamO v1.1 generate_image parameter order (17 params)
-    const resultPromise = client.predict(endpoint, [
-      handle_file(sourceBlob),  // ref_image1
-      null,                     // ref_image2  (unused)
-      'id',                     // ref_task1   (face ID preservation)
-      'ip',                     // ref_task2   (default, unused)
-      style.prompt,             // prompt
-      '-1',                     // seed        (random)
-      768,                      // width       (reduced for faster generation)
-      768,                      // height      (reduced for faster generation)
-      512,                      // ref_res
-      12,                       // num_steps   (v1.1 turbo default)
-      4.5,                      // guidance    (v1.1 default)
-      1,                        // true_cfg
-      0,                        // cfg_start_step
-      0,                        // cfg_end_step
-      '',                       // neg_prompt
-      3.5,                      // neg_guidance
-      0,                        // first_step_guidance
-    ]);
-
-    // Enforce timeout — clear on resolution to avoid leaking the timer
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error('Generation timed out. The AI service may be starting up — please try again.')),
-        TIMEOUT_MS,
-      );
-    });
-
-    let result;
-    try {
-      result = await Promise.race([resultPromise, timeoutPromise]);
-      clearTimeout(timeoutId!);
-    } catch (raceErr) {
-      clearTimeout(timeoutId!);
-      resultPromise.catch(() => {});
-      throw raceErr;
-    }
-
-    // DreamO returns [generated_image, debug_images, seed]
-    const data = result.data as Array<{ url?: string } | string | number | null>;
-    const output = data?.[0] as { url?: string } | null;
-    if (!output?.url) {
-      return NextResponse.json({ error: 'No image generated' }, { status: 502 });
-    }
-
-    const imageRes = await fetch(output.url);
-    if (!imageRes.ok) {
-      return NextResponse.json({ error: 'Failed to retrieve generated image' }, { status: 502 });
-    }
-
-    // Stream the image directly as binary — avoids base64 encoding overhead
-    const imageBuffer = await imageRes.arrayBuffer();
-    const contentType = imageRes.headers.get('content-type') || 'image/png';
-
-    return new NextResponse(imageBuffer, {
+    return new NextResponse(result.imageBuffer, {
       status: 200,
       headers: {
-        'Content-Type': contentType,
-        'X-Style-Id': body.styleId,
+        'Content-Type': result.contentType,
+        'X-Style-Id': style.id,
+        'X-Provider': result.provider,
       },
     });
   } catch (err: unknown) {
     console.error('[generate-headshot] Error:', err);
 
-    // Gradio client throws status objects for quota/queue errors, not Error instances
-    let message = 'Internal server error';
-    let status = 500;
-    if (err instanceof Error) {
-      message = err.message;
-    } else if (err && typeof err === 'object' && 'message' in err) {
-      const gradioErr = err as { message?: string; title?: string; stage?: string };
-      message = gradioErr.message || gradioErr.title || 'Generation failed';
-      // Surface quota errors with a specific status code for client-side handling
-      if (gradioErr.title?.includes('quota') || gradioErr.message?.includes('quota')) {
-        status = 429;
-      }
+    const failClass = classifyError(err);
+    const message = extractErrorMessage(err);
+
+    if (failClass === 'quota' || (err && typeof err === 'object' && 'isQuota' in err)) {
+      return NextResponse.json({ error: message }, { status: 429 });
     }
 
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
