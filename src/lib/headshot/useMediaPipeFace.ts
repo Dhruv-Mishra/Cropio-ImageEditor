@@ -3,12 +3,15 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import type { HeadPose } from './types';
-import { estimateHeadPose, getForeheadPosition } from './posemath';
+import { estimateHeadPose, getForeheadPosition, getFaceMetrics } from './posemath';
 
 export interface FaceTrackingResult {
   pose: HeadPose;
   foreheadX: number;
   foreheadY: number;
+  faceCenterX: number;
+  faceCenterY: number;
+  faceScale: number;
   hasFace: boolean;
 }
 
@@ -35,9 +38,11 @@ export function useMediaPipeFace(
   // EMA smoothing state
   const smoothedPoseRef = useRef<HeadPose>({ pitch: 0, yaw: 0, roll: 0 });
   const smoothedPosRef = useRef({ x: 0, y: 0 });
+  const smoothedFaceRef = useRef({ centerX: 0, centerY: 0, scale: 0 });
   const smoothingInitRef = useRef(false);
-  const POSE_ALPHA = 0.25;      // lower = smoother, higher = more responsive
-  const POSITION_ALPHA = 0.3;
+  const POSE_ALPHA = 0.2;
+  const POSITION_ALPHA = 0.15;
+  const FACE_ALPHA = 0.18;
 
   // Keep callback ref fresh without re-triggering effects
   useEffect(() => {
@@ -105,6 +110,11 @@ export function useMediaPipeFace(
     let running = true;
     let lastTimestamp = -1;
 
+    // Offscreen canvas for downscaled MediaPipe processing (better FPS)
+    const processCanvas = document.createElement('canvas');
+    const processCtx = processCanvas.getContext('2d')!;
+    const PROCESS_WIDTH = 640;
+
     const processFrame = () => {
       if (!running || !video || video.readyState < 2) {
         if (running) animFrameRef.current = requestAnimationFrame(processFrame);
@@ -112,29 +122,32 @@ export function useMediaPipeFace(
       }
 
       const now = performance.now();
-      // Avoid sending the same timestamp twice (detectForVideo requires increasing timestamps)
       if (now <= lastTimestamp) {
         if (running) animFrameRef.current = requestAnimationFrame(processFrame);
         return;
       }
       lastTimestamp = now;
 
+      // Downscale video frame for faster landmark detection
+      const scale = PROCESS_WIDTH / video.videoWidth;
+      const processHeight = Math.round(video.videoHeight * scale);
+      processCanvas.width = PROCESS_WIDTH;
+      processCanvas.height = processHeight;
+      processCtx.drawImage(video, 0, 0, PROCESS_WIDTH, processHeight);
+
       try {
-        const results = fl.detectForVideo(video, now);
+        const results = fl.detectForVideo(processCanvas, now);
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const landmarks = results.faceLandmarks[0];
           const rawPose = estimateHeadPose(landmarks);
-          const rawForehead = getForeheadPosition(
-            landmarks,
-            video.videoWidth,
-            video.videoHeight,
-          );
+          const rawForehead = getForeheadPosition(landmarks, video.videoWidth, video.videoHeight);
+          const rawFace = getFaceMetrics(landmarks, video.videoWidth, video.videoHeight);
 
-          // Apply EMA smoothing to eliminate micro-fluctuations
           if (!smoothingInitRef.current) {
             smoothedPoseRef.current = rawPose;
             smoothedPosRef.current = rawForehead;
+            smoothedFaceRef.current = rawFace;
             smoothingInitRef.current = true;
           } else {
             const sp = smoothedPoseRef.current;
@@ -148,12 +161,21 @@ export function useMediaPipeFace(
               x: sf.x + POSITION_ALPHA * (rawForehead.x - sf.x),
               y: sf.y + POSITION_ALPHA * (rawForehead.y - sf.y),
             };
+            const sc = smoothedFaceRef.current;
+            smoothedFaceRef.current = {
+              centerX: sc.centerX + FACE_ALPHA * (rawFace.centerX - sc.centerX),
+              centerY: sc.centerY + FACE_ALPHA * (rawFace.centerY - sc.centerY),
+              scale: sc.scale + FACE_ALPHA * (rawFace.scale - sc.scale),
+            };
           }
 
           onFrameRef.current({
             pose: smoothedPoseRef.current,
             foreheadX: smoothedPosRef.current.x,
             foreheadY: smoothedPosRef.current.y,
+            faceCenterX: smoothedFaceRef.current.centerX,
+            faceCenterY: smoothedFaceRef.current.centerY,
+            faceScale: smoothedFaceRef.current.scale,
             hasFace: true,
           });
         } else {
@@ -162,6 +184,9 @@ export function useMediaPipeFace(
             pose: { pitch: 0, yaw: 0, roll: 0 },
             foreheadX: 0,
             foreheadY: 0,
+            faceCenterX: 0,
+            faceCenterY: 0,
+            faceScale: 0,
             hasFace: false,
           });
         }

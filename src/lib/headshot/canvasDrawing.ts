@@ -1,14 +1,17 @@
 import type { HeadPose } from './types';
 
 /**
- * Draw a production-grade directional arrow on the overlay canvas.
+ * Draw a flat, wide chevron directional indicator on the overlay canvas.
  *
- * Arrow originates from (ox, oy) — the forehead landmark position.
+ * The chevron originates near (ox, oy) — the mirrored forehead position.
  * Direction determined by current head pose (pitch/yaw).
  * Color is green when on-target, red otherwise.
- * Includes shadow/glow for visibility against any background.
  *
- * The video is mirrored, so we negate yaw for the arrow direction.
+ * Caller must mirror the X coordinate before passing (canvas is un-flipped,
+ * video is CSS-mirrored). Yaw is negated here to map from body-space to
+ * mirrored-screen-space.
+ *
+ * Does NOT call clearRect — caller handles that.
  */
 export function drawPoseArrow(
   ctx: CanvasRenderingContext2D,
@@ -19,70 +22,74 @@ export function drawPoseArrow(
   canvasWidth: number,
   canvasHeight: number,
 ): void {
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
   const color = isOnTarget ? '#22c55e' : '#ef4444';
-  const glowColor = isOnTarget ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.4)';
-  const arrowLength = Math.min(canvasWidth, canvasHeight) * 0.18;
-  const headSize = arrowLength * 0.4;
-  const lineWidth = 7;
-  const dotRadius = 12;
+  const glowColor = isOnTarget ? 'rgba(34, 197, 94, 0.6)' : 'rgba(239, 68, 68, 0.5)';
+  const unit = Math.min(canvasWidth, canvasHeight);
 
-  // Direction vector from pose — negate yaw because video is mirrored
-  const yawRad = (-pose.yaw * Math.PI) / 180;
+  // Chevron sizing — wide and flat
+  const chevronLen = unit * 0.055;
+  const chevronSpread = unit * 0.065;
+  const strokeW = Math.max(6, unit * 0.01);
+  const dotR = Math.max(8, unit * 0.014);
+  const offsetDist = unit * 0.04;
+
+  // Yaw maps directly: positive yaw = user looks right = arrow points right on mirrored display
+  // (X is already mirrored by caller, so no negation needed)
+  const yawRad = (pose.yaw * Math.PI) / 180;
   const pitchRad = (pose.pitch * Math.PI) / 180;
 
   const dirX = Math.sin(yawRad);
   const dirY = Math.sin(pitchRad);
-  const mag = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+  const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
 
-  const nx = dirX / mag;
-  const ny = dirY / mag;
-
-  const endX = ox + nx * arrowLength;
-  const endY = oy + ny * arrowLength;
-
-  // Shadow / glow for visibility
   ctx.save();
   ctx.shadowColor = glowColor;
-  ctx.shadowBlur = 16;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
+  ctx.shadowBlur = 20;
 
-  // Draw arrow shaft
-  ctx.beginPath();
-  ctx.moveTo(ox, oy);
-  ctx.lineTo(endX, endY);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = 'round';
-  ctx.stroke();
+  // Only draw chevron if there's meaningful direction (avoids wild spin near center)
+  if (magnitude > 0.12) {
+    const nx = dirX / magnitude;
+    const ny = dirY / magnitude;
+    const px = -ny; // perpendicular
+    const py = nx;
 
-  // Draw arrowhead
-  const angle = Math.atan2(ny, nx);
+    // Chevron center (offset from origin dot)
+    const cx = ox + nx * offsetDist;
+    const cy = oy + ny * offsetDist;
+
+    // Tip (front of chevron)
+    const tipX = cx + nx * chevronLen;
+    const tipY = cy + ny * chevronLen;
+
+    // Back arms (two wide ends of the V)
+    const arm1X = cx - px * chevronSpread;
+    const arm1Y = cy - py * chevronSpread;
+    const arm2X = cx + px * chevronSpread;
+    const arm2Y = cy + py * chevronSpread;
+
+    ctx.beginPath();
+    ctx.moveTo(arm1X, arm1Y);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(arm2X, arm2Y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = strokeW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  // Origin dot
   ctx.beginPath();
-  ctx.moveTo(endX, endY);
-  ctx.lineTo(
-    endX - headSize * Math.cos(angle - Math.PI / 6),
-    endY - headSize * Math.sin(angle - Math.PI / 6),
-  );
-  ctx.lineTo(
-    endX - headSize * Math.cos(angle + Math.PI / 6),
-    endY - headSize * Math.sin(angle + Math.PI / 6),
-  );
-  ctx.closePath();
+  ctx.arc(ox, oy, dotR, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
 
-  // Draw origin dot with white ring
+  // White ring around origin
+  ctx.shadowBlur = 0;
   ctx.beginPath();
-  ctx.arc(ox, oy, dotRadius, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(ox, oy, dotRadius + 3, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.lineWidth = 2.5;
+  ctx.arc(ox, oy, dotR + 3, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.lineWidth = 2;
   ctx.stroke();
 
   ctx.restore();
@@ -115,4 +122,60 @@ export function drawCaptureFlash(
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.stroke();
+}
+
+/**
+ * Draw a head-shaped oval positioning guide in the center of the canvas.
+ * Turns green when face is positioned correctly, white/dim otherwise.
+ * Does NOT call clearRect — caller handles that.
+ */
+export function drawFaceGuide(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  isPositioned: boolean,
+  opacity: number,
+): void {
+  const guideX = canvasWidth / 2;
+  const guideY = canvasHeight * 0.42;
+  const guideRx = canvasWidth * 0.12;
+  const guideRy = canvasHeight * 0.28;
+
+  const color = isPositioned
+    ? `rgba(34, 197, 94, ${opacity * 0.8})`
+    : `rgba(255, 255, 255, ${opacity * 0.35})`;
+  const glowColor = isPositioned
+    ? `rgba(34, 197, 94, ${opacity * 0.3})`
+    : 'transparent';
+
+  ctx.save();
+
+  if (isPositioned) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 20;
+  }
+
+  // Dashed oval
+  ctx.beginPath();
+  ctx.ellipse(guideX, guideY, guideRx, guideRy, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = isPositioned ? 3.5 : 2.5;
+  ctx.setLineDash(isPositioned ? [] : [14, 8]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Small crosshair at center when not positioned
+  if (!isPositioned && opacity > 0.5) {
+    const chSize = 8;
+    ctx.beginPath();
+    ctx.moveTo(guideX - chSize, guideY);
+    ctx.lineTo(guideX + chSize, guideY);
+    ctx.moveTo(guideX, guideY - chSize);
+    ctx.lineTo(guideX, guideY + chSize);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.4})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }

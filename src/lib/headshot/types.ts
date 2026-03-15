@@ -9,6 +9,7 @@ export interface HeadPose {
 export interface PoseTarget {
   label: string;
   instruction: string;
+  tip: string;
   pitch: number;
   yaw: number;
   thresholdDeg: number;
@@ -18,6 +19,7 @@ export interface PoseTarget {
 export type CapturePhase =
   | 'idle'
   | 'requesting-camera'
+  | 'positioning'
   | 'tracking'
   | 'holding'
   | 'captured'
@@ -37,6 +39,7 @@ export const POSE_SEQUENCE: PoseTarget[] = [
   {
     label: 'Straight',
     instruction: 'Look straight at the camera',
+    tip: 'Smile naturally \u{1F60A}',
     pitch: 0,
     yaw: 0,
     thresholdDeg: 15,
@@ -44,6 +47,7 @@ export const POSE_SEQUENCE: PoseTarget[] = [
   {
     label: 'Left',
     instruction: 'Turn your head slightly Left',
+    tip: 'Show your best side \u{2728}',
     pitch: 0,
     yaw: -20,
     thresholdDeg: 18,
@@ -51,6 +55,7 @@ export const POSE_SEQUENCE: PoseTarget[] = [
   {
     label: 'Right',
     instruction: 'Turn your head slightly Right',
+    tip: 'You\u2019re doing great! \u{1F44F}',
     pitch: 0,
     yaw: 20,
     thresholdDeg: 18,
@@ -58,6 +63,7 @@ export const POSE_SEQUENCE: PoseTarget[] = [
   {
     label: 'Up',
     instruction: 'Tilt your head slightly Up',
+    tip: 'Chin up, confidence on \u{1F4AA}',
     pitch: -15,
     yaw: 0,
     thresholdDeg: 18,
@@ -65,6 +71,7 @@ export const POSE_SEQUENCE: PoseTarget[] = [
   {
     label: 'Down',
     instruction: 'Tilt your head slightly Down',
+    tip: 'Almost there! \u{1F3AF}',
     pitch: 15,
     yaw: 0,
     thresholdDeg: 18,

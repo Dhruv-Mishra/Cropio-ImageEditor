@@ -3,8 +3,8 @@
 import { useRef, useCallback, useState } from 'react';
 import type { CapturePhase, CapturedFrame } from './types';
 import { POSE_SEQUENCE, HOLD_DURATION_MS } from './types';
-import { isPoseOnTarget } from './posemath';
-import { drawPoseArrow, drawCaptureFlash } from './canvasDrawing';
+import { isPoseOnTarget, isFacePositioned } from './posemath';
+import { drawPoseArrow, drawCaptureFlash, drawFaceGuide } from './canvasDrawing';
 import type { FaceTrackingResult } from './useMediaPipeFace';
 
 interface CaptureState {
@@ -14,6 +14,7 @@ interface CaptureState {
   holdProgress: number; // 0–1
   isOnTarget: boolean;
   instruction: string;
+  tip: string;
   errorMessage: string | null;
 }
 
@@ -24,6 +25,7 @@ const INITIAL_STATE: CaptureState = {
   holdProgress: 0,
   isOnTarget: false,
   instruction: '',
+  tip: '',
   errorMessage: null,
 };
 
@@ -74,8 +76,8 @@ export function useCaptureSequence(
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
         facingMode: 'user',
       },
       audio: false,
@@ -97,12 +99,13 @@ export function useCaptureSequence(
     capturedInStepRef.current = false;
     holdStartRef.current = null;
     const next: CaptureState = {
-      phase: 'tracking',
+      phase: 'positioning',
       currentStep: 0,
       frames: [],
       holdProgress: 0,
       isOnTarget: false,
-      instruction: POSE_SEQUENCE[0].instruction,
+      instruction: 'Position your face inside the oval guide',
+      tip: 'Find good lighting for best results \u{1F4A1}',
       errorMessage: null,
     };
     updateState(next);
@@ -127,24 +130,71 @@ export function useCaptureSequence(
 
   /**
    * Process each face tracking frame — called from the rAF loop.
-   * All logic reads from stateRef (not inside a setState updater)
-   * to avoid React StrictMode double-invocation issues.
+   * Handles positioning → tracking → holding → capture flow.
+   * Canvas is NOT CSS-mirrored, so we flip X coordinates to match the mirrored video.
    */
   const processFrame = useCallback(
     (result: FaceTrackingResult) => {
       const prev = stateRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+
+      // --- Positioning phase: show face guide, wait for face to be centered ---
+      if (prev.phase === 'positioning') {
+        if (!ctx || !canvas) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!result.hasFace) {
+          holdStartRef.current = null;
+          drawFaceGuide(ctx, canvas.width, canvas.height, false, 1);
+          updateState({ ...prev, holdProgress: 0, isOnTarget: false });
+          return;
+        }
+
+        const positioned = isFacePositioned(
+          result.faceCenterX, result.faceCenterY, result.faceScale,
+          canvas.width, canvas.height,
+        );
+
+        drawFaceGuide(ctx, canvas.width, canvas.height, positioned, 1);
+
+        if (positioned) {
+          const now = performance.now();
+          if (!holdStartRef.current) holdStartRef.current = now;
+          const elapsed = now - holdStartRef.current;
+          const progress = Math.min(elapsed / 1000, 1);
+
+          if (progress >= 1) {
+            holdStartRef.current = null;
+            updateState({
+              ...prev,
+              phase: 'tracking',
+              holdProgress: 0,
+              isOnTarget: false,
+              instruction: POSE_SEQUENCE[0].instruction,
+              tip: POSE_SEQUENCE[0].tip,
+            });
+          } else {
+            updateState({ ...prev, holdProgress: progress, isOnTarget: true });
+          }
+        } else {
+          holdStartRef.current = null;
+          updateState({ ...prev, holdProgress: 0, isOnTarget: false });
+        }
+        return;
+      }
+
+      // --- Tracking / Holding phases ---
       if (prev.phase !== 'tracking' && prev.phase !== 'holding') return;
       if (prev.currentStep >= POSE_SEQUENCE.length) return;
 
       const target = POSE_SEQUENCE[prev.currentStep];
-      const canvas = canvasRef.current;
 
-      // No face detected
       if (!result.hasFace) {
         holdStartRef.current = null;
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (ctx && canvas) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          drawFaceGuide(ctx, canvas.width, canvas.height, false, 0.25);
         }
         updateState({ ...prev, phase: 'tracking', holdProgress: 0, isOnTarget: false });
         return;
@@ -152,20 +202,14 @@ export function useCaptureSequence(
 
       const onTarget = isPoseOnTarget(result.pose, target);
 
-      // Draw the arrow overlay
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          drawPoseArrow(
-            ctx,
-            result.foreheadX,
-            result.foreheadY,
-            result.pose,
-            onTarget,
-            canvas.width,
-            canvas.height,
-          );
-        }
+      // Mirror X for display (canvas is not CSS-flipped, but video is)
+      const displayX = canvas ? canvas.width - result.foreheadX : result.foreheadX;
+      const displayY = result.foreheadY;
+
+      if (ctx && canvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawFaceGuide(ctx, canvas.width, canvas.height, true, 0.2);
+        drawPoseArrow(ctx, displayX, displayY, result.pose, onTarget, canvas.width, canvas.height);
       }
 
       // Not on target — reset hold timer
@@ -193,21 +237,18 @@ export function useCaptureSequence(
         if (dataUrl) {
           const newFrames = [...prev.frames, { dataUrl, poseLabel: target.label }];
 
-          // Flash animation (safe side-effect outside setState)
-          if (canvas) {
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              let flashAlpha = 1;
-              const flashInterval = setInterval(() => {
-                flashAlpha -= 0.05;
-                if (flashAlpha <= 0) {
-                  clearInterval(flashInterval);
-                  ctx.clearRect(0, 0, canvas.width, canvas.height);
-                } else {
-                  drawCaptureFlash(ctx, canvas.width, canvas.height, flashAlpha);
-                }
-              }, 30);
-            }
+          // Flash animation
+          if (ctx && canvas) {
+            let flashAlpha = 1;
+            const flashInterval = setInterval(() => {
+              flashAlpha -= 0.05;
+              if (flashAlpha <= 0) {
+                clearInterval(flashInterval);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+              } else {
+                drawCaptureFlash(ctx, canvas.width, canvas.height, flashAlpha);
+              }
+            }, 30);
           }
 
           const nextStep = prev.currentStep + 1;
@@ -221,6 +262,7 @@ export function useCaptureSequence(
               holdProgress: 1,
               isOnTarget: true,
               instruction: 'All poses captured!',
+              tip: 'Great job! \u{1F389}',
             });
             return;
           }
@@ -236,6 +278,7 @@ export function useCaptureSequence(
             holdProgress: 0,
             isOnTarget: false,
             instruction: POSE_SEQUENCE[nextStep].instruction,
+            tip: POSE_SEQUENCE[nextStep].tip,
           });
           return;
         }

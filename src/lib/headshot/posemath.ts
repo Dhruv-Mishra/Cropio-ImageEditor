@@ -70,3 +70,38 @@ export function getForeheadPosition(
     y: lm.y * videoHeight,
   };
 }
+
+/**
+ * Compute face center and relative scale from landmarks.
+ */
+export function getFaceMetrics(
+  landmarks: Landmark[],
+  videoWidth: number,
+  videoHeight: number,
+): { centerX: number; centerY: number; scale: number } {
+  const forehead = landmarks[10];
+  const chin = landmarks[152];
+  const centerX = ((forehead.x + chin.x) / 2) * videoWidth;
+  const centerY = ((forehead.y + chin.y) / 2) * videoHeight;
+  const faceHeight = Math.abs(chin.y - forehead.y) * videoHeight;
+  return { centerX, centerY, scale: faceHeight / videoHeight };
+}
+
+/**
+ * Check if the face is approximately centered in the frame.
+ * Distance-from-center is symmetric so mirroring doesn't affect the result.
+ */
+export function isFacePositioned(
+  faceCenterX: number,
+  faceCenterY: number,
+  faceScale: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): boolean {
+  const guideCenterX = canvasWidth / 2;
+  const guideCenterY = canvasHeight * 0.42;
+  const xOk = Math.abs(faceCenterX - guideCenterX) < canvasWidth * 0.13;
+  const yOk = Math.abs(faceCenterY - guideCenterY) < canvasHeight * 0.15;
+  const scaleOk = faceScale > 0.2 && faceScale < 0.65;
+  return xOk && yOk && scaleOk;
+}
