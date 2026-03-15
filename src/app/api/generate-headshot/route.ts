@@ -113,9 +113,23 @@ export async function POST(request: NextRequest) {
         'X-Style-Id': body.styleId,
       },
     });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('[generate-headshot] Error:', err);
-    const message = err instanceof Error ? err.message : 'Internal server error';
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    // Gradio client throws status objects for quota/queue errors, not Error instances
+    let message = 'Internal server error';
+    let status = 500;
+    if (err instanceof Error) {
+      message = err.message;
+    } else if (err && typeof err === 'object' && 'message' in err) {
+      const gradioErr = err as { message?: string; title?: string; stage?: string };
+      message = gradioErr.message || gradioErr.title || 'Generation failed';
+      // Surface quota errors with a specific status code for client-side handling
+      if (gradioErr.title?.includes('quota') || gradioErr.message?.includes('quota')) {
+        status = 429;
+      }
+    }
+
+    return NextResponse.json({ error: message }, { status });
   }
 }

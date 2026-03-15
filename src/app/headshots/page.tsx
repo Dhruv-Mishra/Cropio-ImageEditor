@@ -8,11 +8,23 @@ import { HeadshotPreviewStrip } from '@/components/headshot/HeadshotPreviewStrip
 import { useMediaPipeFace } from '@/lib/headshot/useMediaPipeFace';
 import { useCaptureSequence } from '@/lib/headshot/useCaptureSequence';
 import { HEADSHOT_STYLES } from '@/lib/headshot/templates';
+import { saveHeadshotSession, loadHeadshotSession, clearSession } from '@/lib/db';
+import type { HeadshotSessionData, GeneratedHeadshot } from '@/lib/types';
+
+const ACTIVE_SESSION_KEY = 'cropai_active_headshot_session_id';
+
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
 
 export default function HeadshotsPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const [restoredSession, setRestoredSession] = useState<HeadshotSessionData | null>(null);
+  const [isRestoring, setIsRestoring] = useState(true);
 
   const {
     state,
@@ -28,9 +40,114 @@ export default function HeadshotsPage() {
   const { initFaceMesh, isLoading: modelLoading, error: modelError } =
     useMediaPipeFace(videoRef, isTracking, processFrame);
 
-  /**
-   * Start button handler — request camera → load model → begin sequence.
-   */
+  // --- AI Headshot Generation State ---
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [generatedImages, setGeneratedImages] = useState<Array<{ id: string; objectUrl: string }>>([]);
+  const generatedImagesRef = useRef<Array<{ id: string; objectUrl: string }>>([]);
+  generatedImagesRef.current = generatedImages;
+  // Keep actual blobs for persistence (object URLs can't be serialized)
+  const generatedBlobsRef = useRef<Map<string, Blob>>(new Map());
+
+  // --- Session persistence ---
+  const saveCurrentSession = useCallback(async (
+    frames: Array<{ dataUrl: string; poseLabel: string }>,
+    blobs: Map<string, Blob>,
+  ) => {
+    if (!sessionIdRef.current || frames.length === 0) return;
+
+    const generatedArr: GeneratedHeadshot[] = [];
+    blobs.forEach((blob, styleId) => {
+      generatedArr.push({ styleId, blob });
+    });
+
+    const sessionData: HeadshotSessionData = {
+      id: sessionIdRef.current,
+      type: 'headshot',
+      frames,
+      generatedImages: generatedArr,
+      thumbnailDataUrl: frames[0]?.dataUrl,
+      createdAt: Date.now(),
+    };
+
+    await saveHeadshotSession(sessionData);
+  }, []);
+
+  // Restore session on mount
+  useEffect(() => {
+    async function restore() {
+      try {
+        const activeId = localStorage.getItem(ACTIVE_SESSION_KEY);
+        if (!activeId) { setIsRestoring(false); return; }
+
+        const session = await loadHeadshotSession(activeId);
+        if (!session?.frames?.length) {
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
+          setIsRestoring(false);
+          return;
+        }
+
+        sessionIdRef.current = session.id;
+        setRestoredSession(session);
+
+        // Restore generated images as object URLs
+        const restored: Array<{ id: string; objectUrl: string }> = [];
+        for (const gen of session.generatedImages) {
+          const objectUrl = URL.createObjectURL(gen.blob);
+          // Extract base styleId (strip composite '::timestamp' suffix if present)
+          const baseId = gen.styleId.includes('::') ? gen.styleId.split('::')[0] : gen.styleId;
+          restored.push({ id: baseId, objectUrl });
+          generatedBlobsRef.current.set(gen.styleId, gen.blob);
+        }
+        setGeneratedImages(restored);
+      } catch (err) {
+        console.error('[headshots] Failed to restore session:', err);
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+      } finally {
+        setIsRestoring(false);
+      }
+    }
+    restore();
+  }, []);
+
+  // Auto-save when frames change (capture complete)
+  useEffect(() => {
+    if (state.phase === 'complete' || state.phase === 'uploading' || state.phase === 'done') {
+      if (state.frames.length > 0) {
+        if (!sessionIdRef.current) {
+          sessionIdRef.current = generateId();
+          try { localStorage.setItem(ACTIVE_SESSION_KEY, sessionIdRef.current); } catch {}
+        }
+        void saveCurrentSession(state.frames, generatedBlobsRef.current);
+      }
+    }
+  }, [state.phase, state.frames, saveCurrentSession]);
+
+  // Save on beforeunload
+  useEffect(() => {
+    const flush = () => {
+      if (state.frames.length > 0 && sessionIdRef.current) {
+        // Fire-and-forget save
+        void saveCurrentSession(state.frames, generatedBlobsRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, [state.frames, saveCurrentSession]);
+
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    return () => {
+      generatedImagesRef.current.forEach((img) => URL.revokeObjectURL(img.objectUrl));
+    };
+  }, []);
+
+  // Cleanup camera on unmount
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
   const handleStart = useCallback(async () => {
     try {
       const stream = await startCamera();
@@ -40,69 +157,42 @@ export default function HeadshotsPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not start camera';
       toast.error(msg);
-      // Reset to idle so user can retry
       reset();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
   }, [startCamera, initFaceMesh, startSequence, reset]);
 
-  /**
-   * When sequence is complete, auto-trigger upload.
-   */
+  // When sequence is complete, auto-trigger upload
   useEffect(() => {
     if (state.phase === 'complete' && state.frames.length > 0) {
-      // Stop the camera stream to save resources during upload
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      void uploadFrames(state.frames).catch(() => {
-        // Error is already handled inside uploadFrames via state update
-      });
+      void uploadFrames(state.frames).catch(() => {});
     }
   }, [state.phase, state.frames, uploadFrames]);
 
-  /**
-   * Cleanup camera stream on unmount.
-   */
-  useEffect(() => {
-    return () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
-  // --- AI Headshot Generation State ---
-  const [generatingId, setGeneratingId] = useState<string | null>(null);
-  const [generatedImages, setGeneratedImages] = useState<Array<{ id: string; objectUrl: string }>>([]);
-  const generatedImagesRef = useRef<Array<{ id: string; objectUrl: string }>>([]);
-  generatedImagesRef.current = generatedImages;
-
-  /**
-   * Cleanup generated object URLs on unmount only (ref avoids premature revocation).
-   */
-  useEffect(() => {
-    return () => {
-      generatedImagesRef.current.forEach((img) => URL.revokeObjectURL(img.objectUrl));
-    };
-  }, []);
-
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     generatedImagesRef.current.forEach((img) => URL.revokeObjectURL(img.objectUrl));
     setGeneratedImages([]);
+    generatedBlobsRef.current.clear();
     setGeneratingId(null);
+    setRestoredSession(null);
+    // Clear the persisted session
+    if (sessionIdRef.current) {
+      await clearSession(sessionIdRef.current);
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+      sessionIdRef.current = null;
+    }
     reset();
   }, [reset]);
 
-  const isIdle = state.phase === 'idle';
-  const isRequestingCamera = state.phase === 'requesting-camera';
-  const isUploading = state.phase === 'uploading';
-  const isDone = state.phase === 'done';
-  const isError = state.phase === 'error';
-  const showViewfinder = !isIdle && state.phase !== 'done';
-
   const handleGenerate = useCallback(async (styleId: string) => {
-    const straightFrame = state.frames.find((f) => f.poseLabel === 'Straight');
+    // Use restored frames if available, otherwise use capture state frames
+    const frames = restoredSession?.frames ?? state.frames;
+    const straightFrame = frames.find((f) => f.poseLabel === 'Straight');
     if (!straightFrame) {
       toast.error('No straight-ahead photo found');
       return;
@@ -113,29 +203,35 @@ export default function HeadshotsPage() {
       const res = await fetch('/api/generate-headshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceImage: straightFrame.dataUrl,
-          styleId,
-        }),
+        body: JSON.stringify({ sourceImage: straightFrame.dataUrl, styleId }),
       });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Generation failed' }));
+        if (res.status === 429) {
+          toast.error('GPU quota exceeded — please try again later', { duration: 8000 });
+          return;
+        }
         throw new Error(body.error || `Failed (${res.status})`);
       }
 
-      // Response is binary image — create blob URL directly (no base64 parsing)
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
+      const genKey = `${styleId}::${Date.now()}`;
+      generatedBlobsRef.current.set(genKey, blob);
       setGeneratedImages((prev) => [...prev, { id: styleId, objectUrl }]);
       toast.success('Headshot generated!');
+
+      // Persist the new generated image
+      const allFrames = restoredSession?.frames ?? state.frames;
+      void saveCurrentSession(allFrames, generatedBlobsRef.current);
     } catch (err) {
       console.error('[headshots] Generation failed:', err);
       toast.error(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       setGeneratingId(null);
     }
-  }, [state.frames]);
+  }, [state.frames, restoredSession, saveCurrentSession]);
 
   const handleDownloadGenerated = useCallback((objectUrl: string, label: string) => {
     const link = document.createElement('a');
@@ -144,9 +240,27 @@ export default function HeadshotsPage() {
     link.click();
   }, []);
 
+  const isIdle = state.phase === 'idle' && !restoredSession;
+  const isRequestingCamera = state.phase === 'requesting-camera';
+  const isUploading = state.phase === 'uploading';
+  const isDone = state.phase === 'done' || restoredSession !== null;
+  const isError = state.phase === 'error';
+  const showViewfinder = !isIdle && state.phase !== 'done' && !restoredSession;
+  const displayFrames = restoredSession?.frames ?? state.frames;
+
+  if (isRestoring) {
+    return (
+      <section className="mx-auto max-w-3xl px-4 py-12 sm:px-6 lg:px-8">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <p className="text-sm text-gray-500 dark:text-gray-400">Loading session…</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-12 lg:px-8">
-      {/* Page title */}
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 dark:text-white sm:text-4xl">
           Headshot Capture
@@ -261,7 +375,7 @@ export default function HeadshotsPage() {
                   Photos captured successfully
                 </h2>
               </div>
-              <HeadshotPreviewStrip frames={state.frames} />
+              <HeadshotPreviewStrip frames={displayFrames} />
             </div>
 
             {/* Style selection */}
@@ -318,6 +432,13 @@ export default function HeadshotsPage() {
                   </p>
                 </div>
               )}
+
+              {/* Generate More prompt */}
+              {generatedImages.length > 0 && generatingId === null && (
+                <p className="mt-3 text-center text-xs text-gray-500 dark:text-gray-400">
+                  Tap any style above to generate more headshots from your captured photos
+                </p>
+              )}
             </div>
 
             {/* Generated results */}
@@ -330,21 +451,26 @@ export default function HeadshotsPage() {
                   {generatedImages.map((img) => {
                     const style = HEADSHOT_STYLES.find((s) => s.id === img.id);
                     return (
-                      <div key={img.id} className="group relative">
+                      <div key={`${img.id}-${generatedImages.indexOf(img)}`} className="group relative">
                         <img
                           src={img.objectUrl}
                           alt={`Generated: ${style?.label}`}
                           className="w-full rounded-xl border border-gray-200 shadow-md dark:border-gray-700"
                         />
-                        <button
-                          onClick={() => handleDownloadGenerated(img.objectUrl, style?.label || img.id)}
-                          className="absolute bottom-2 right-2 rounded-full bg-black/60 p-2 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                          title="Download"
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                        </button>
+                        <div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button
+                            onClick={() => handleDownloadGenerated(img.objectUrl, style?.label || img.id)}
+                            className="rounded-full bg-black/60 p-2 text-white"
+                            title="Download"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                          </button>
+                        </div>
+                        <p className="mt-1 text-center text-[10px] font-medium text-gray-500 dark:text-gray-400">
+                          {style?.label}
+                        </p>
                       </div>
                     );
                   })}
