@@ -135,7 +135,7 @@ export function HeadshotViewfinder({
                 className="transition-[stroke-dashoffset] duration-100"
               />
             </svg>
-            <span className="absolute text-3xl font-black text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] tabular-nums">
+            <span className="absolute text-2xl font-semibold text-white/90 drop-shadow-[0_1px_6px_rgba(0,0,0,0.7)] tabular-nums">
               {secondsLeft}
             </span>
           </div>
@@ -145,9 +145,9 @@ export function HeadshotViewfinder({
       {/* Stabilizing indicator */}
       {isStabilizing && !isStable && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="rounded-full bg-black/40 px-4 py-2 backdrop-blur-sm">
-            <span className="text-sm font-semibold text-yellow-300 animate-pulse">
-              Hold steady…
+          <div className="rounded-full border border-white/10 bg-black/50 px-5 py-2 backdrop-blur-md">
+            <span className="text-xs font-medium tracking-widest uppercase text-yellow-200/90">
+              Hold steady
             </span>
           </div>
         </div>
@@ -160,9 +160,9 @@ export function HeadshotViewfinder({
 
       {/* Instruction bar — at TOP with adaptive text */}
       {showInstruction && instruction && (
-        <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/70 to-transparent px-4 pt-4 pb-10">
+        <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/60 via-black/30 to-transparent px-5 pt-5 pb-12">
           <p
-            className="text-center text-sm font-bold tracking-wide text-white drop-shadow-md sm:text-base transition-opacity duration-300"
+            className="text-center text-[13px] font-medium tracking-[0.04em] uppercase text-white/90 drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)] sm:text-sm transition-opacity duration-300"
             key={instruction}
           >
             {instruction}

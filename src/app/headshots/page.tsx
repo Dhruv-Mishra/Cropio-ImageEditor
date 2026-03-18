@@ -23,6 +23,7 @@ export default function HeadshotsPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const uploadStartedRef = useRef(false);
   const [restoredSession, setRestoredSession] = useState<HeadshotSessionData | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
 
@@ -109,7 +110,7 @@ export default function HeadshotsPage() {
     restore();
   }, []);
 
-  // Auto-save when frames change (capture complete)
+  // Auto-save when phase transitions to post-capture states
   useEffect(() => {
     if (state.phase === 'complete' || state.phase === 'uploading' || state.phase === 'done') {
       if (state.frames.length > 0) {
@@ -117,22 +118,21 @@ export default function HeadshotsPage() {
           sessionIdRef.current = generateId();
           try { localStorage.setItem(ACTIVE_SESSION_KEY, sessionIdRef.current); } catch {}
         }
-        void saveCurrentSession(state.frames, generatedBlobsRef.current);
+        void saveCurrentSession(state.frames, generatedBlobsRef.current).catch(() => {});
       }
     }
-  }, [state.phase, state.frames, saveCurrentSession]);
+  }, [state.phase, state.frames.length, saveCurrentSession]);
 
   // Save on beforeunload
   useEffect(() => {
     const flush = () => {
       if (state.frames.length > 0 && sessionIdRef.current) {
-        // Fire-and-forget save
-        void saveCurrentSession(state.frames, generatedBlobsRef.current);
+        void saveCurrentSession(state.frames, generatedBlobsRef.current).catch(() => {});
       }
     };
     window.addEventListener('beforeunload', flush);
     return () => window.removeEventListener('beforeunload', flush);
-  }, [state.frames, saveCurrentSession]);
+  }, [state.frames.length, saveCurrentSession]);
 
   // Cleanup object URLs on unmount
   useEffect(() => {
@@ -163,15 +163,19 @@ export default function HeadshotsPage() {
     }
   }, [startCamera, initFaceMesh, startSequence, reset]);
 
-  // When sequence is complete, auto-trigger upload
+  // When sequence is complete, auto-trigger upload (guarded to prevent cascade)
   useEffect(() => {
-    if (state.phase === 'complete' && state.frames.length > 0) {
+    if (state.phase === 'complete' && state.frames.length > 0 && !uploadStartedRef.current) {
+      uploadStartedRef.current = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      void uploadFrames(state.frames).catch(() => {});
+      void uploadFrames(state.frames).catch(() => {
+        uploadStartedRef.current = false;
+      });
     }
-  }, [state.phase, state.frames, uploadFrames]);
+  }, [state.phase, state.frames.length, uploadFrames]);
 
   const handleReset = useCallback(async () => {
+    uploadStartedRef.current = false;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -182,7 +186,9 @@ export default function HeadshotsPage() {
     setRestoredSession(null);
     // Clear the persisted session
     if (sessionIdRef.current) {
-      await clearSession(sessionIdRef.current);
+      try {
+        await clearSession(sessionIdRef.current);
+      } catch {}
       localStorage.removeItem(ACTIVE_SESSION_KEY);
       sessionIdRef.current = null;
     }
@@ -224,7 +230,7 @@ export default function HeadshotsPage() {
 
       // Persist the new generated image
       const allFrames = restoredSession?.frames ?? state.frames;
-      void saveCurrentSession(allFrames, generatedBlobsRef.current);
+      void saveCurrentSession(allFrames, generatedBlobsRef.current).catch(() => {});
     } catch (err) {
       console.error('[headshots] Generation failed:', err);
       toast.error(err instanceof Error ? err.message : 'Generation failed');
