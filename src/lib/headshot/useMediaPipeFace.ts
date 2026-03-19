@@ -115,8 +115,11 @@ export function useMediaPipeFace(
           vision,
           createOptions('GPU'),
         );
-      } catch {
+      } catch (gpuErr) {
         // GPU failed — fall back to CPU
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[FaceTracking] GPU delegate failed, trying CPU:', gpuErr);
+        }
         landmarkerRef.current = await FaceLandmarker.createFromOptions(
           vision,
           createOptions('CPU'),
@@ -125,10 +128,11 @@ export function useMediaPipeFace(
 
       setIsReady(true);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Failed to load face tracking model';
+      const detail = err instanceof Error ? err.message : String(err);
+      const msg = `Face tracking model failed: ${detail}`;
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[FaceTracking] Init failed:', err);
+      }
       setError(msg);
       throw new Error(msg);
     } finally {
